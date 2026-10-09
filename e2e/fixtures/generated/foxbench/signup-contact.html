@@ -1,0 +1,14 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Contact · Kitebase</title><link rel="stylesheet" href="/__fbn/style.css"></head>
+<body class="site-signup"><header class="top"><a class="brand" href="/signup/">Kitebase</a>
+<nav aria-label="Main"><a href="/signup/">Sign up</a><a href="/signup/contact">Contact</a></nav></header><main id="main"><h1>Contact us</h1><p class="muted">We answer within two business days.</p>
+<form class="card" method="post" action="/signup/contact" novalidate>
+<div class="row"><div><label for="c-name">Your name</label><input id="c-name" name="name" autocomplete="name" value=""></div>
+<div><label for="c-email">Email</label><input id="c-email" name="email" type="email" autocomplete="email" value=""></div></div>
+<label for="topic">Topic</label><select id="topic" name="topic"><option value="" selected>Choose a topic</option><option value="sales">Sales</option><option value="billing">Billing</option><option value="support">Technical support</option><option value="other">Other</option></select>
+<div id="order-field" hidden><label for="order">Order number</label><input id="order" name="order" placeholder="ORD-12345" value=""></div>
+<label for="message">Message</label><textarea id="message" name="message" rows="6"></textarea>
+<p class="muted">At least 20 characters.</p><p><button type="submit">Send message</button></p></form>
+<script>const t=document.getElementById("topic");t.addEventListener("change",()=>{document.getElementById("order-field").hidden=t.value!=="billing";});</script></main>
+<footer class="foot">Kitebase is a foxbench mock site. Nothing here is real.</footer></body></html>
