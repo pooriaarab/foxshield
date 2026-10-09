@@ -43,25 +43,30 @@ export async function main(argv: string[], io: Io): Promise<number> {
     io.err(`${(error as Error).message}\n${USAGE}`);
     return 2;
   }
-  const threshold = Number(args.values.threshold);
+  const raw = args.values.threshold.trim();
+  const threshold = raw === "" ? NaN : Number(raw);
   const maxNodes = args.values["max-nodes"] === undefined ? undefined : Number(args.values["max-nodes"]);
   if (args.positionals.length === 0 || !(threshold >= 0 && threshold <= 1) || (maxNodes !== undefined && !(maxNodes > 0))) {
     io.err(`Give at least one file or URL, a threshold from 0 to 1, and a positive --max-nodes.\n${USAGE}`);
     return 2;
   }
   const results = [];
+  let failed: string | null = null;
   for (const source of args.positionals) {
-    let html: string;
     try {
-      html = await load(source);
+      const report = scanHtml(await load(source), { maxNodes });
+      results.push({ source, flagged: report.findings.filter((f) => f.score >= threshold).length, report });
     } catch (error) {
-      io.err(`foxshield: cannot read ${source}: ${(error as Error).message}\n`);
-      return 2;
+      failed = `foxshield: cannot read ${source}: ${(error as Error).message}\n`;
+      break;
     }
-    const report = scanHtml(html, { maxNodes });
-    results.push({ source, flagged: report.findings.filter((f) => f.score >= threshold).length, report });
   }
-  if (args.values.json) io.out(`${JSON.stringify({ threshold, results })}\n`);
+  // Print what was scanned even when a later source failed, then the error.
+  if (args.values.json) io.out(`${JSON.stringify({ threshold, results, ...(failed ? { error: failed.trim() } : {}) })}\n`);
   else for (const r of results) io.out(args.values.sanitize ? `${sanitize(r.report, { threshold })}\n` : describe(r.source, r.report, threshold));
+  if (failed) {
+    io.err(failed);
+    return 2;
+  }
   return results.some((r) => r.flagged > 0) ? 1 : 0;
 }

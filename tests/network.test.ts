@@ -6,12 +6,12 @@ import { expect, it } from "vitest";
 import { scanResponse, type StreamFilterLike } from "../src/index.js";
 
 (globalThis as { DOMParser?: unknown }).DOMParser = DOMParser;
+const chunk = (text: string) => new TextEncoder().encode(text).buffer as ArrayBuffer;
 
 it("N3 stops keeping at the first chunk that does not fit, and passes every byte on", async () => {
   const written: number[] = [];
   const filter: StreamFilterLike = { ondata: null, onstop: null, onerror: null, write: (d) => { written.push(d.byteLength); }, close: () => {} };
   const done = scanResponse(filter, { maxBytes: 45 });
-  const chunk = (text: string) => new TextEncoder().encode(text).buffer as ArrayBuffer;
   filter.ondata!({ data: chunk("<html><body><p>first part.</p>") });
   filter.ondata!({ data: chunk(`<p>${"x".repeat(60)}</p>`) });
   filter.ondata!({ data: chunk("<p>tail</p>") });
