@@ -10,7 +10,7 @@ import { cpSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { launch, poll, serve, writeArtifact } from "create-foxkit/e2e";
-import { scanDocument, scanHtml } from "../dist/index.js";
+import { sanitize, scanDocument, scanHtml } from "../dist/index.js";
 import { score, table } from "./score.mjs";
 
 const THRESHOLD = 0.5;
@@ -65,6 +65,14 @@ try {
     ["offscreen", "#h-offscreen"], ["offscreen", "#h-indent"], ["clipped", "#h-clip"], ["clipped", "#h-clippath"],
     ["tiny-font", "#h-tiny"], ["low-contrast", "#h-contrast"], ["pseudo-content", "#h-pseudo"],
   ]) check(`${kind} found on ${id}`, true, has(kind, id));
+  for (const [kind, id] of [
+    ["clipped", "#h-scale"], ["clipped", "#h-poly"], ["clipped", "#h-inset"], ["low-contrast", "#h-fill"], ["low-contrast", "#h-svg"],
+    ["opacity-zero", "#h-filter"], ["covered", "#h-covered"], ["not-rendered", "#h-svgtitle"],
+  ]) check(`${kind} found on ${id}`, true, has(kind, id));
+  const clean = sanitize(report);
+  for (const n of ["scale", "polygon", "inset", "fill", "svgtitle", "svgfill", "filter", "covered"]) {
+    check(`H25 sanitize drops the ${n} note`, false, clean.includes(`Hidden note ${n}:`));
+  }
   check("H2 visible child of a hidden parent is not hidden", false, report.findings.some((f) => f.text.includes("I am visible again")));
   check("H13 open shadow root is scanned", true, report.findings.some((f) => f.selector.includes("#h-shadow >>> ") && f.score >= THRESHOLD));
   check("H14 same-origin iframe is scanned", true, report.findings.some((f) => f.selector.includes("#h-frame >>> ") && f.score >= THRESHOLD));
