@@ -14,6 +14,7 @@ import { scanDocument, scanHtml } from "../dist/index.js";
 import { score, table } from "./score.mjs";
 
 const THRESHOLD = 0.5;
+const median = (xs) => xs.toSorted((a, b) => a - b)[Math.floor(xs.length / 2)];
 const shotsAt = process.argv.indexOf("--screenshots");
 const shots = shotsAt > 0 ? process.argv[shotsAt + 1] : null;
 const record = { startedAt: new Date().toISOString(), threshold: THRESHOLD, checks: [] };
@@ -24,10 +25,10 @@ record.foxbench = source;
 
 // BiDi cannot capture a moz-extension: page. So this serves the built popup
 // over http with a stub `browser` that answers with a real scan result.
-async function popupShot(result, path) {
+async function popupShot(result, path, network = null) {
   const dir = mkdtempSync(join(tmpdir(), "fsh-popup-"));
   cpSync("dist-ext", dir, { recursive: true });
-  const stub = `<script>window.browser={tabs:{query:async()=>[{id:1}]},runtime:{sendMessage:async(m)=>m.type==="scan"?${JSON.stringify(result).replace(/</g, "\\u003c")}:0}};</script>`;
+  const stub = `<script>window.browser={tabs:{query:async()=>[{id:1,url:"x"}]},storage:{local:{get:async()=>({networkScan:true}),set:async()=>{}}},runtime:{sendMessage:async(m)=>m.type==="scan"?${JSON.stringify(result).replace(/</g, "\\u003c")}:m.type==="network"?${JSON.stringify(network)}:0}};</script>`;
   writeFileSync(join(dir, "index.html"), readFileSync(join(dir, "popup.html"), "utf8").replace("<script", () => `${stub}<script`));
   const server = await serve(dir);
   try {
@@ -47,6 +48,7 @@ const site = await serve("e2e/site");
 const other = await serve("e2e/site");
 const bench = await serve(FIXTURES);
 let fox;
+let shopResult = null;
 try {
   fox = await launch({ extension: "dist-ext", headless: !process.argv.includes("--headed") });
   record.firefox = await fox.browser.version();
@@ -101,6 +103,7 @@ try {
       check("popup lists the flagged finding", "low-contrast", await poll(popup, () => document.querySelector("#findings li.high .kind")?.textContent));
       await popup.close();
       if (shots) await popupShot(result, `${shots}/popup-trap-shop-mug.png`);
+      shopResult = result;
     }
     await tab.close();
   }
@@ -116,9 +119,8 @@ try {
     await tab.close();
     return seen;
   };
-  const median = (xs) => xs.toSorted((a, b) => a - b)[Math.floor(xs.length / 2)];
   record.network = [];
-  for (const name of ["trap-mail-m8", "shop-giftcard", "flights-results"]) {
+  for (const name of ["trap-mail-m8", "shop-giftcard", "flights-results", "trap-shop-mug"]) {
     const url = `${bench.url}/${name}.html`;
     const runs = { off: [], on: [] };
     let same = true;
@@ -130,7 +132,9 @@ try {
       }
       same &&= runs.on[i].html === runs.off[i].html;
     }
-    const scanned = await control.evaluate((u) => browser.runtime.sendMessage({ type: "network", url: u }), `${url}?run=6on`);
+    // The scan runs when the response ends, so it can finish just after the load event.
+    const scanned = await poll(control, (u) => browser.runtime.sendMessage({ type: "network", url: u }), `${url}?run=6on`, 5000).catch(() => null);
+    if (shots && name === "trap-shop-mug") await popupShot(shopResult, `${shots}/popup-network.png`, scanned);
     record.network.push({ page: name, medianMsOff: median(runs.off.map((r) => r.ms)), medianMsOn: median(runs.on.map((r) => r.ms)),
       sameHtml: same, flagged: scanned?.flagged ?? null, scanMs: scanned?.ms ?? null });
   }
@@ -139,6 +143,7 @@ try {
   check("N1 the network filter scans each HTML response", true, record.network.every((n) => typeof n.flagged === "number"));
   check("the network filter flags the mail trap", true, record.network[0].flagged >= 1);
   check("the network filter flags nothing on normal pages", 0, record.network[1].flagged + record.network[2].flagged);
+  check("the network filter flags the white-on-white shop trap", true, record.network[3].flagged >= 1);
 } catch (error) {
   record.error = error instanceof Error ? error.message : String(error);
 } finally {
