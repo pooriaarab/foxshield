@@ -43,6 +43,14 @@ E2E test in `e2e/run.mjs` runs the same scanner in a real Firefox.
 | H14 | Text in a same-origin iframe is skipped. | The scan walks it. A cross-origin frame counts in `skippedFrames`. | E2E |
 | H15 | CSS that loads late hides text after the scan. | Instruction rules do not depend on visibility, so the text is still flagged. | E2E |
 | H16 | Text in `::before` or `::after` is missed. | A `pseudo-content` finding (live mode only). | E2E |
+| H18 | Text scaled to nothing (`transform: scale(0)`) is missed in live mode. | A `clipped` finding: a 0×0 box that still has client rects. | E2E, `tests/hidden.test.ts` |
+| H19 | `clip-path` with no area (`polygon(0 0, 0 0, 0 0)`, `inset(0 100% 0 0)`) is missed. | A `clipped` finding. | E2E, `tests/hidden.test.ts` |
+| H20 | `-webkit-text-fill-color` or SVG `fill` paints text the background color, while `color` stays dark. | A `low-contrast` finding from the painted color. | E2E, `tests/hidden.test.ts` |
+| H21 | `filter: opacity(0)` hides text. | An `opacity-zero` finding. | E2E, `tests/hidden.test.ts` |
+| H22 | An opaque box covers the text. | A `covered` finding (live mode, with `elementFromPoint`). | E2E |
+| H23 | Text in an SVG `<title>` is never read, because `title` is skipped everywhere. | Only `<title>` in `<head>` is skipped. SVG title text gives a finding. | E2E, `tests/hidden.test.ts` |
+| H24 | Static mode misses `color: var(--x)` from a `<style>` rule. | Custom properties from `<style>` rules are resolved. | `tests/hidden.test.ts` |
+| H25 | `sanitize()` keeps text that any H18-H23 technique hides. | That text is not in the output. | E2E |
 | H17 | Normal pages give many findings at or above the threshold. | On the foxbench normal pages, precision stays high. The E2E artifact reports it. | E2E |
 
 ## Sanitize and the model tier
