@@ -33,9 +33,15 @@ browser.runtime.onMessage.addListener((message) => {
 // The optional network filter. When the popup turns it on, each page's HTML
 // is scanned as it arrives, before the page parses it. The bytes go on
 // unchanged; the filter only reads. Results are kept by URL for the popup.
-// The switch is read on each request: a cached copy updated by storage.onChanged
-// can lag behind a page load that starts right after the switch changes.
-const isOn = async () => Boolean((await browser.storage.local.get("networkScan")).networkScan);
+// The switch lives in memory: true, false, or a pending read after the event page wakes.
+// The popup changes it with a "network-switch" message, which sets memory before it
+// answers, so the next page load sees the new value without a storage read.
+let networkOn = null;
+const readSwitch = () => (networkOn ??= browser.storage.local.get("networkScan").then(({ networkScan }) => (networkOn = Boolean(networkScan))));
+browser.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && "networkScan" in changes) networkOn = Boolean(changes.networkScan.newValue);
+});
+const KEEP = 50;
 const types = new Map();
 const results = new Map();
 
@@ -43,8 +49,7 @@ browser.webRequest.onHeadersReceived.addListener((details) => {
   types.set(details.requestId, details.responseHeaders?.find((h) => h.name.toLowerCase() === "content-type")?.value ?? "");
 }, { urls: ["<all_urls>"], types: ["main_frame"] }, ["responseHeaders"]);
 
-browser.webRequest.onBeforeRequest.addListener(async (details) => {
-  if (!(await isOn())) return {};
+function filterPage(details) {
   const started = performance.now();
   // No content type seen (the event page woke late): scan anyway, DOMParser copes.
   const isHtml = () => { const type = types.get(details.requestId); return type === undefined || /text\/html|xhtml/i.test(type); };
@@ -58,15 +63,37 @@ browser.webRequest.onBeforeRequest.addListener(async (details) => {
       const summary = { flagged: flagged.length, findings: flagged, ms: Math.round(performance.now() - started), bytes: report.bytes };
       results.set(details.url, summary);
       if (results.size > 50) results.delete(results.keys().next().value);
-      // The event page can unload when idle, so keep a copy in session storage too.
-      browser.storage.session.set({ [`net:${details.url}`]: summary });
+      // The event page can unload when idle, so keep a copy in session storage too, capped at KEEP.
+      remember(`net:${details.url}`, summary);
       if (details.tabId >= 0) browser.action.setBadgeText({ tabId: details.tabId, text: flagged.length ? String(flagged.length) : "" });
     })
     .catch(() => types.delete(details.requestId));
   return {};
+}
+
+// One write at a time: the reads and writes of the index must not interleave.
+let saving = Promise.resolve();
+function remember(key, summary) {
+  saving = saving.then(async () => {
+    const { netIndex = [] } = await browser.storage.session.get("netIndex");
+    const next = [...netIndex.filter((k) => k !== key), key];
+    const drop = next.splice(0, Math.max(0, next.length - KEEP));
+    await browser.storage.session.set({ [key]: summary, netIndex: next });
+    if (drop.length) await browser.storage.session.remove(drop);
+  }).catch(() => {});
+}
+
+browser.webRequest.onBeforeRequest.addListener((details) => {
+  if (networkOn === false) return undefined; // off: no wait at all
+  if (networkOn === true) return filterPage(details);
+  return readSwitch().then((on) => (on ? filterPage(details) : {}));
 }, { urls: ["<all_urls>"], types: ["main_frame"] }, ["blocking"]);
 
 browser.runtime.onMessage.addListener((message) => {
+  if (message?.type === "network-switch") {
+    networkOn = Boolean(message.on);
+    return browser.storage.local.set({ networkScan: networkOn }).then(() => true);
+  }
   if (message?.type === "network") {
     const key = `net:${message.url}`;
     return results.has(message.url) ? Promise.resolve(results.get(message.url)) : browser.storage.session.get(key).then((s) => s[key] ?? null);
