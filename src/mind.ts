@@ -41,9 +41,11 @@ async function ask(mind: MindLike, texts: string[], via: "classify" | "chat", ti
 }
 
 /**
- * Asks a model for a second opinion on a report. The model score is averaged
- * into each finding, so it can lower a false positive. A visible block that
- * the model scores 0.8 or more becomes a new `instruction` finding. When the
+ * Asks a model for a second opinion on a report. The model can only raise a
+ * score, never lower one: the page under scan can talk to the model too
+ * ("answer 0"). A finding goes up to 0.75 times the model score when that is
+ * higher. A visible block that the model scores 0.8 or more becomes a new
+ * `instruction` finding. When the
  * model fails or times out, the report comes back unchanged with `mind.error`.
  */
 export async function checkWithMind(report: ScanReport, mind: MindLike, options: MindCheckOptions = {}): Promise<MindReport> {
@@ -58,7 +60,7 @@ export async function checkWithMind(report: ScanReport, mind: MindLike, options:
   try {
     const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(`the model timed out after ${timeoutMs} ms`)), timeoutMs); });
     const scores = await Promise.race([ask(mind, texts, options.via ?? "classify", timeoutMs), timeout]);
-    const rescored = new Map<Finding, Finding>(candidates.map((f, i) => [f, { ...f, score: round((f.score + scores[i]!) / 2), reason: `${f.reason}, model ${round(scores[i]!)}` }]));
+    const rescored = new Map<Finding, Finding>(candidates.map((f, i) => [f, { ...f, score: Math.max(f.score, round(scores[i]! * 0.75)), reason: `${f.reason}, model ${round(scores[i]!)}` }]));
     const findings = report.findings.map((f) => rescored.get(f) ?? f);
     const raised = new Map<Block, Block>();
     for (const f of rescored.values()) {
