@@ -21,6 +21,7 @@ E2E test in `e2e/run.mjs` runs the same scanner in a real Firefox.
 | T10 | Cyrillic letters that look like Latin letters hide a phrase ("ignоre" with a Cyrillic "о"). | A `homoglyph` finding, and the rules still match. | `tests/text.test.ts` |
 | T11 | A finding has no way back to the element. | Each finding has a CSS `selector` that `querySelector` resolves to the element. | `tests/text.test.ts` |
 | T12 | A huge page makes the scan run for minutes. | The scan stops at `maxNodes` or `maxMs` and sets `truncated: true`. | `tests/text.test.ts` |
+| T13 | `scanHtml` gets a fragment with no `<html>` or `<body>` (a CMS snippet), and scans nothing. | The fragment is scanned like a full page. | `tests/text.test.ts` |
 
 ## Hidden text
 
