@@ -27,7 +27,7 @@ export function scanDocument(target?: Document | ScanOptions, maybeOptions?: Sca
   const blocks: Block[] = [];
   let nodes = 0;
   let truncated = false;
-  const skippedFrames = 0;
+  let skippedFrames = 0;
 
   // ---- Text rules -------------------------------------------------------
   const VISIBLE_MIN = 0.3;
@@ -123,6 +123,142 @@ export function scanDocument(target?: Document | ScanOptions, maybeOptions?: Sca
     return prefix + parts.join(" > ");
   }
 
+  // ---- Styles -------------------------------------------------------------
+  type RGBA = [number, number, number, number];
+  /** What the walk carries down: inherited style and the hiding state of the parent. */
+  type Ctx = { prefix: string; vis: string; font: number; color: RGBA | null; bg: RGBA | null; opacity: number; aria: Element | null };
+  type Look = { display: string; vis: string; opacity: number; font: number; color: RGBA | null; bg: RGBA | null; offscreen: boolean; clipped: boolean; unrendered: boolean };
+  const NAMED: Record<string, RGBA> = { white: [255, 255, 255, 1], black: [0, 0, 0, 1], transparent: [0, 0, 0, 0], snow: [255, 250, 250, 1],
+    whitesmoke: [245, 245, 245, 1], ivory: [255, 255, 240, 1], gray: [128, 128, 128, 1], grey: [128, 128, 128, 1], silver: [192, 192, 192, 1] };
+  function parseColor(value: string | undefined): RGBA | null {
+    const v = (value ?? "").trim().toLowerCase();
+    if (NAMED[v]) return NAMED[v];
+    const hex = v.match(/^#([0-9a-f]{3,8})$/);
+    if (hex) {
+      const h = hex[1]!.length <= 4 ? [...hex[1]!].map((c) => c + c).join("") : hex[1]!;
+      return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16), h.length === 8 ? parseInt(h.slice(6, 8), 16) / 255 : 1];
+    }
+    const fn = v.match(/^rgba?\(([^)]+)\)$/);
+    if (!fn) return null;
+    const n = fn[1]!.split(/[\s,/]+/).filter(Boolean).map((x) => (x.endsWith("%") ? parseFloat(x) / 100 : parseFloat(x)));
+    return n.length >= 3 ? [n[0]!, n[1]!, n[2]!, n[3] ?? 1] : null;
+  }
+  const over = (top: RGBA, under: RGBA): RGBA => [0, 1, 2].map((i) => top[i]! * top[3] + under[i]! * (1 - top[3])).concat(1) as RGBA;
+  const luminance = (c: RGBA) => {
+    const [r, g, b] = c.slice(0, 3).map((x) => { const s = x / 255; return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4; });
+    return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!;
+  };
+  const contrast = (a: RGBA, b: RGBA) => { const [x, y] = [luminance(a), luminance(b)].toSorted((p, q) => q - p); return (x! + 0.05) / (y! + 0.05); };
+  const px = (v: string | undefined, base = 16) => {
+    const m = (v ?? "").trim().match(/^(-?[\d.]+)(px|em|rem|%)?$/);
+    if (!m) return NaN;
+    const n = parseFloat(m[1]!);
+    return m[2] === "em" ? n * base : m[2] === "rem" ? n * 16 : m[2] === "%" ? (n * base) / 100 : n;
+  };
+  const CLIP_PATH = /inset\(\s*(4\d|50|[5-9]\d|100)(\.\d+)?%|circle\(\s*0/;
+  const CLIP_RECT = /rect\(\s*0(px)?[\s,]+0(px)?[\s,]+0(px)?[\s,]+0(px)?\s*\)|rect\(\s*1px[\s,]+1px/;
+
+  let sheet: [string, Record<string, string>][] | null = null;
+  const parseDecls = (text: string) => {
+    const out: Record<string, string> = {};
+    for (const part of text.split(";")) {
+      const i = part.indexOf(":");
+      if (i > 0) out[part.slice(0, i).trim().toLowerCase()] = part.slice(i + 1).replace(/!important/i, "").trim().toLowerCase();
+    }
+    return out;
+  };
+  /** Static mode: `<style>` rules (no @media blocks) and the inline style, later rules first-come. */
+  function declsOf(el: Element): Record<string, string> {
+    if (!sheet) {
+      const css = Array.from(doc.querySelectorAll("style"), (s) => s.textContent ?? "").join("\n")
+        .replace(/\/\*[\s\S]*?\*\//g, "").replace(/@[^{;]+\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g, "");
+      sheet = Array.from(css.matchAll(/([^{}]+)\{([^{}]*)\}/g), (m) => [m[1]!.trim(), parseDecls(m[2]!)] as [string, Record<string, string>]);
+    }
+    const d: Record<string, string> = {};
+    for (const [sel, decls] of sheet) {
+      try { if (el.matches(sel)) Object.assign(d, decls); } catch { /* a selector this parser does not know */ }
+    }
+    Object.assign(d, parseDecls(el.getAttribute("style") ?? ""));
+    if (!d.display && el.hasAttribute("hidden")) d.display = "none";
+    return d;
+  }
+  function lookOf(el: Element, ctx: Ctx): Look {
+    const win = el.ownerDocument.defaultView;
+    if (live && win) {
+      const cs = win.getComputedStyle(el);
+      const r = el.getBoundingClientRect();
+      const box = (r.width <= 1 || r.height <= 1) && /hidden|clip/.test(`${cs.overflowX} ${cs.overflowY}`);
+      const bg = parseColor(cs.backgroundColor);
+      return {
+        display: cs.display, vis: cs.visibility, opacity: parseFloat(cs.opacity) || 0, font: parseFloat(cs.fontSize), color: parseColor(cs.color),
+        bg: cs.backgroundImage !== "none" ? null : bg && bg[3] > 0 && ctx.bg ? over(bg, ctx.bg) : ctx.bg,
+        offscreen: r.right + win.scrollX <= 0 || r.bottom + win.scrollY <= 0 || px(cs.textIndent) <= -500
+          || (/absolute|fixed/.test(cs.position) && px(cs.left) >= 5000),
+        clipped: box || CLIP_PATH.test(cs.clipPath) || CLIP_RECT.test(cs.clip) || (r.width * r.height < 1 && cs.display !== "contents" && r.width + r.height > 0),
+        unrendered: el.getClientRects().length === 0 && cs.display !== "contents",
+      };
+    }
+    const d = declsOf(el);
+    const font = d["font-size"] ? px(d["font-size"], ctx.font) : ctx.font;
+    const ownBg = /url\(|gradient/.test(d.background ?? "") ? undefined : parseColor(d["background-color"] ?? d.background?.split(/\s+/)[0]);
+    const far = (k: string) => px(d[k]) <= -500;
+    const tiny = (k: string) => px(d[k]) <= 1;
+    return {
+      display: d.display ?? "", vis: d.visibility ?? ctx.vis, opacity: d.opacity ? parseFloat(d.opacity) : 1, font: Number.isNaN(font) ? ctx.font : font,
+      color: d.color ? parseColor(d.color) : ctx.color,
+      bg: /url\(|gradient/.test(`${d.background ?? ""} ${d["background-image"] ?? ""}`) ? null : ownBg && ownBg[3] > 0 && ctx.bg ? over(ownBg, ctx.bg) : ctx.bg,
+      offscreen: (/absolute|fixed|relative/.test(d.position ?? "") && (far("left") || far("top") || far("right")))
+        || far("text-indent") || px(d["margin-left"]) <= -1000 || /translate[xy]?\(\s*-\d{3,}/.test(d.transform ?? ""),
+      clipped: ((tiny("width") || tiny("height") || tiny("max-height")) && /hidden|clip/.test(d.overflow ?? d["overflow-x"] ?? d["overflow-y"] ?? ""))
+        || CLIP_PATH.test(d["clip-path"] ?? "") || CLIP_RECT.test(d.clip ?? ""),
+      unrendered: false,
+    };
+  }
+
+  // ---- Hidden text --------------------------------------------------------
+  const BASE: Partial<Record<FindingKind, number>> = { "display-none": 0.15, "not-rendered": 0.1, "visibility-hidden": 0.15, "opacity-zero": 0.25,
+    offscreen: 0.25, clipped: 0.2, "tiny-font": 0.3, "low-contrast": 0.35, "aria-hidden": 0.05, comment: 0.1, noscript: 0.1, attribute: 0.05, "pseudo-content": 0.1 };
+  const ADDRESS = /\S+@[\w-]+\.[\w.-]+|https?:\/\/|\bwww\.|\b[a-z0-9-]+\.[a-z]{2,}\//i;
+  function hidden(kind: FindingKind, raw: string, selector: string, extra: string[] = [], links = "") {
+    if (squash(raw).replace(/[^\p{L}\p{N}]/gu, "").length < 3) return;
+    const plain = clean(raw);
+    const r = rules(plain);
+    const address = ADDRESS.test(`${plain} ${links}`);
+    add(kind, plain, selector, [kind, ...extra, ...r.names, ...(address ? ["address in hidden text"] : [])], combine(BASE[kind] ?? 0.1, r.score, address ? 0.2 : 0));
+  }
+  /** The text of a subtree, without scripts and styles, and the hrefs of its links. */
+  function textOf(el: Element): [string, string] {
+    let text = "";
+    const links: string[] = [];
+    const visit = (n: Node) => {
+      for (let c = n.firstChild; c && text.length < 5000; c = c.nextSibling) {
+        if (c.nodeType === 3) text += c.nodeValue ?? "";
+        else if (c.nodeType === 1 && !SKIP.has((c as Element).localName)) {
+          const href = (c as Element).getAttribute("href");
+          if (href) links.push(href);
+          text += " ";
+          visit(c);
+        }
+      }
+    };
+    visit(el);
+    return [text, links.join(" ")];
+  }
+  /** The hiding kind for text directly inside an element, from its own style. */
+  function ownerKind(ctx: Ctx): FindingKind | null {
+    if (/hidden|collapse/.test(ctx.vis)) return "visibility-hidden";
+    if (ctx.opacity <= 0.05) return "opacity-zero";
+    if (ctx.font < 4) return "tiny-font";
+    if (ctx.color && ctx.bg && (ctx.color[3] <= 0.05 || contrast(over(ctx.color, ctx.bg), ctx.bg) < 1.5)) return "low-contrast";
+    return null;
+  }
+  const groups = new Map<Element, { kind: FindingKind; text: string; prefix: string; aria: boolean }>();
+  const arias = new Map<Element, { text: string; prefix: string }>();
+  const pseudo = (el: Element, which: string) => {
+    const c = el.ownerDocument.defaultView?.getComputedStyle(el, which).content ?? "none";
+    return Array.from(c.matchAll(/"((?:[^"\\]|\\.)*)"/g), (m) => m[1]!.replace(/\\([0-9a-f]{1,6})\s?/gi, (_, h: string) => String.fromCodePoint(parseInt(h, 16))).replace(/\\(.)/g, "$1")).join("");
+  };
+
   // ---- Walk ---------------------------------------------------------------
   const SKIP = new Set(["script", "style", "template", "head", "meta", "link", "title", "base"]);
   const BLOCK = new Set(["address", "article", "aside", "blockquote", "body", "button", "caption", "dd", "details", "dialog", "div",
@@ -140,33 +276,85 @@ export function scanDocument(target?: Document | ScanOptions, maybeOptions?: Sca
     return truncated;
   };
 
-  /** Walks the children of a node. Returns the run that text after them goes to. */
-  function walk(node: Node, start: Acc, prefix: string, depth: number): Acc {
+  /** Walks the children of a node (an element or a shadow root). Returns the run that text after them goes to. */
+  function walk(node: Element | ShadowRoot, start: Acc, ctx: Ctx, depth: number): Acc {
     let acc = start;
+    const owner = node.nodeType === 1 ? (node as Element) : (node as ShadowRoot).host;
+    const kind = ownerKind(ctx);
     const seen = new Map<string, number>();
     for (let child = node.firstChild; child; child = child.nextSibling) {
       if (truncated) return acc;
       if (child.nodeType === 3) {
-        acc.text += child.nodeValue ?? "";
-        acc.spaced += child.nodeValue ?? "";
+        const value = child.nodeValue ?? "";
+        if (kind) {
+          const g = groups.get(owner) ?? { kind, text: "", prefix: ctx.prefix, aria: !!ctx.aria };
+          g.text += value;
+          groups.set(owner, g);
+          continue;
+        }
+        acc.text += value;
+        acc.spaced += value;
+        if (ctx.aria) arias.get(ctx.aria)!.text += value;
+        continue;
+      }
+      if (child.nodeType === 8) {
+        if (squash(child.nodeValue ?? "").length >= 15) hidden("comment", child.nodeValue ?? "", selectorOf(owner, ctx.prefix));
         continue;
       }
       if (child.nodeType !== 1) continue;
       const el = child as Element;
-      const index = (seen.get(el.localName) ?? 0) + 1;
-      seen.set(el.localName, index);
-      partOf.set(el, `${el.localName}:nth-of-type(${index})`);
-      if (SKIP.has(el.localName) || overBudget()) continue;
+      const name = el.localName;
+      const index = (seen.get(name) ?? 0) + 1;
+      seen.set(name, index);
+      partOf.set(el, `${name}:nth-of-type(${index})`);
+      if (SKIP.has(name) || overBudget()) continue;
       if (depth > 900) { truncated = true; return acc; }
-      if (!BLOCK.has(el.localName)) {
-        acc.spaced += " ";
-        acc = walk(el, acc, prefix, depth + 1);
+      if (name === "noscript") {
+        hidden("noscript", (el.textContent ?? "").replace(/<[^>]*>/g, " "), selectorOf(el, ctx.prefix));
+        continue;
+      }
+      const look = lookOf(el, ctx);
+      const aria = ctx.aria ?? (el.getAttribute("aria-hidden") === "true" ? el : null);
+      const terminal: FindingKind | null = look.display === "none" ? "display-none"
+        : look.unrendered && !/^(option|optgroup|area|map)$/.test(name) ? "not-rendered"
+        : look.offscreen ? "offscreen" : look.clipped ? "clipped" : null;
+      if (terminal) {
+        const [text, links] = textOf(el);
+        hidden(terminal, text, selectorOf(el, ctx.prefix), aria ? ["aria-hidden"] : [], links);
+        continue;
+      }
+      if (aria === el) arias.set(el, { text: "", prefix: ctx.prefix });
+      const inner: Ctx = { prefix: ctx.prefix, vis: look.vis, font: look.font, color: look.color, bg: look.bg, opacity: ctx.opacity * look.opacity, aria };
+      for (const attr of ["alt", "title", "aria-label"]) {
+        const value = squash(el.getAttribute(attr) ?? "");
+        if (value.length >= 15 && !squash(el.textContent ?? "").includes(value)) hidden("attribute", value, selectorOf(el, ctx.prefix), [`${attr} text`]);
+      }
+      if (live && !ownerKind(inner)) {
+        const extra = pseudo(el, "::before") + pseudo(el, "::after");
+        if (extra) hidden("pseudo-content", extra, selectorOf(el, ctx.prefix));
+      }
+      if (name === "iframe") {
+        let sub: Document | null = null;
+        try { sub = (el as HTMLIFrameElement).contentDocument; } catch { sub = null; }
+        if (!sub?.body) { if (el.getAttribute("src") || el.getAttribute("srcdoc")) skippedFrames += 1; continue; }
+        const frameAcc: Acc = { el: sub.body, text: "", spaced: "", prefix: `${selectorOf(el, ctx.prefix)} >>> ` };
+        order.push(frameAcc);
+        walk(sub.body, frameAcc, { ...ROOT, prefix: frameAcc.prefix }, depth + 1);
+        continue;
+      }
+      let next: Acc = acc;
+      if (BLOCK.has(name)) {
+        next = { el, text: "", spaced: "", prefix: ctx.prefix };
+        order.push(next);
+      } else acc.spaced += " ";
+      next = walk(el, next, inner, depth + 1);
+      const open = (el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot;
+      if (open) next = walk(open, next, { ...inner, prefix: `${selectorOf(el, ctx.prefix)} >>> ` }, depth + 1);
+      if (!BLOCK.has(name)) {
+        acc = next;
         acc.spaced += " ";
         continue;
       }
-      const inner: Acc = { el, text: "", spaced: "", prefix };
-      order.push(inner);
-      walk(el, inner, prefix, depth + 1);
       // Text after a block belongs to a new run of the outer block, so runs stay in page order.
       acc = { el: acc.el, text: "", spaced: "", prefix: acc.prefix };
       order.push(acc);
@@ -174,13 +362,20 @@ export function scanDocument(target?: Document | ScanOptions, maybeOptions?: Sca
     return acc;
   }
 
-  const rootAcc: Acc = { el: doc.body ?? doc.documentElement, text: "", spaced: "", prefix: "" };
-  order.push(rootAcc);
-  if (rootAcc.el) walk(rootAcc.el, rootAcc, "", 0);
+  const ROOT: Ctx = { prefix: "", vis: "visible", font: 16, color: [0, 0, 0, 1], bg: [255, 255, 255, 1], opacity: 1, aria: null };
+  const body = doc.body ?? doc.documentElement;
+  if (body) {
+    const rootAcc: Acc = { el: body, text: "", spaced: "", prefix: "" };
+    order.push(rootAcc);
+    const look = lookOf(body, ROOT);
+    walk(body, rootAcc, { ...ROOT, vis: look.vis, font: look.font, color: look.color, bg: look.bg ?? ROOT.bg }, 0);
+  }
   for (const acc of order) {
     if (squash(acc.text).length === 0) continue;
     blocks.push(checkVisible(acc.text, acc.spaced, selectorOf(acc.el, acc.prefix)));
   }
+  for (const [el, g] of groups) hidden(g.kind, g.text, selectorOf(el, g.prefix), g.aria ? ["aria-hidden"] : []);
+  for (const [el, a] of arias) hidden("aria-hidden", a.text, selectorOf(el, a.prefix));
 
   findings.sort((a, b) => b.score - a.score);
   return { mode: live ? "live" : "static", findings, blocks, truncated, nodes, ms: Math.round(now() - started), skippedFrames };
