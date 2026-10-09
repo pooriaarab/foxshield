@@ -27,14 +27,14 @@ record.foxbench = source;
 async function popupShot(result, path) {
   const dir = mkdtempSync(join(tmpdir(), "fsh-popup-"));
   cpSync("dist-ext", dir, { recursive: true });
-  const stub = `<script>window.browser={tabs:{query:async()=>[{id:1}]},runtime:{sendMessage:async(m)=>m.type==="scan"?${JSON.stringify(result)}:0}};</script>`;
-  writeFileSync(join(dir, "index.html"), readFileSync(join(dir, "popup.html"), "utf8").replace("<script", `${stub}<script`));
+  const stub = `<script>window.browser={tabs:{query:async()=>[{id:1}]},runtime:{sendMessage:async(m)=>m.type==="scan"?${JSON.stringify(result).replace(/</g, "\\u003c")}:0}};</script>`;
+  writeFileSync(join(dir, "index.html"), readFileSync(join(dir, "popup.html"), "utf8").replace("<script", () => `${stub}<script`));
   const server = await serve(dir);
   try {
     const shot = await fox.open(`${server.url}/index.html`);
     await shot.setViewport({ width: 420, height: 560 });
     await shot.evaluate(() => document.getElementById("scan").click());
-    await poll(shot, () => document.querySelector("#findings li"));
+    await poll(shot, () => document.querySelectorAll("#findings li").length);
     await shot.screenshot({ path });
     await shot.close();
   } finally {
@@ -119,6 +119,10 @@ try {
 record.static = score(pages.map((p) => ({ page: p, report: scanHtml(readFileSync(`${FIXTURES}/${p.name}.html`, "utf8")) })), THRESHOLD);
 record.passed = !record.error && record.checks.length > 0 && record.checks.every((c) => c.ok);
 const path = writeArtifact("artifacts", "e2e", record);
+// A short Markdown copy of the two tables: small enough to commit.
+const md = `# foxshield on foxbench (${record.startedAt.slice(0, 10)})\n\nThreshold ${THRESHOLD}. Pages from ${source}. E2E ${record.passed ? "passed" : "failed"}.\n\n`
+  + `## Live: Firefox ${record.firefox ?? "?"}, through the demo extension\n\n${record.live ? table(record.live) : record.error}\n\n## Static: scanHtml in Node\n\n${table(record.static)}\n`;
+writeFileSync(path.replace(/e2e-(\d{4}-\d\d-\d\d)\.json$/, "precision-recall-$1.md"), md);
 for (const c of record.checks) console.log(`${c.ok ? "ok " : "BAD"} ${c.name}: ${JSON.stringify(c.actual)}`);
 if (record.live) console.log(`\nLive (Firefox ${record.firefox}, via the extension):\n${table(record.live)}`);
 console.log(`\nStatic (scanHtml in Node):\n${table(record.static)}`);
