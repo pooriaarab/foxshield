@@ -226,6 +226,12 @@ a switch for the network filter. Build it with `pnpm build:ext`, then load
   send...") can score below 0.5. Attackers adapt to public rules. The model
   tier helps, but it is optional, and models can be fooled too. A fooled
   model can only fail to raise a score; it cannot lower one.
+- The rules also run over each pair of neighbouring blocks, so a phrase
+  split over two elements is caught. A phrase split over three or more
+  blocks, or spread across distant parts of the page, is not. Word lists
+  cover common synonyms ("disregard the guidance you were given") and
+  spelled-out addresses ("x at evil dot test"), but not paraphrase in
+  general, other languages, or text encoded as Base64 or similar.
 - Text that uses no hiding trick and no rule phrase passes as normal text.
   `sanitize()` keeps it.
 - A flagged block is a whole block. In the foxbench mail trap, the whole email
