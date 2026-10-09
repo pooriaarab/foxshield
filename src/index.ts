@@ -2,3 +2,5 @@
 export { scanDocument } from "./page.js";
 export { scanHtml } from "./html.js";
 export type { Block, Finding, FindingKind, ScanOptions, ScanReport } from "./types.js";
+export { sanitize, type SanitizeOptions } from "./sanitize.js";
+export { checkWithMind, type MindCheckOptions, type MindLike, type MindReport } from "./mind.js";
