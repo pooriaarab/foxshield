@@ -189,7 +189,9 @@ npx foxshield scan page.html https://example.com/help --threshold 0.5
 | `--max-nodes <n>` | Stop each scan after `n` elements. |
 
 Exit codes: 0 when no finding reaches the threshold, 1 when one does, and 2
-on an error (a missing file, a failed fetch, a bad flag). The CLI uses static
+on an error (a missing file, a failed fetch, a bad flag). When a file fails,
+the CLI still prints the results for the files before it (with `--json`, an
+`error` field), then stops. The CLI uses static
 mode, so it does not run the page's scripts or external CSS.
 
 There is no MCP server.

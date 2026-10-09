@@ -6,7 +6,7 @@ export interface SanitizeOptions {
 }
 
 const INVISIBLE = /[​-‍⁠᠎﻿‪-‮⁦-⁩\u{E0000}-\u{E007F}]/gu;
-const tidy = (text: string) => text.replace(INVISIBLE, "").replace(/<(\/?\s*untrusted-data)/gi, "&lt;$1");
+const tidy = (text: string) => text.replace(INVISIBLE, "").replace(/<(\s*\/?\s*untrusted-data)/gi, "&lt;$1");
 const attr = (text: string) => text.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 
 /**

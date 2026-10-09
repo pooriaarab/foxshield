@@ -35,13 +35,15 @@ export function scanResponse(filter: StreamFilterLike, options: ResponseScanOpti
     const chunks: Uint8Array[] = [];
     let bytes = 0;
     let kept = 0;
+    let full = false;
     filter.ondata = (event) => {
       filter.write(event.data);
       bytes += event.data.byteLength;
-      if (kept + event.data.byteLength <= maxBytes) {
+      // Stop keeping at the first chunk that does not fit, so the scan never reads text with a hole in it.
+      if (!full && kept + event.data.byteLength <= maxBytes) {
         chunks.push(new Uint8Array(event.data.slice(0)));
         kept += event.data.byteLength;
-      }
+      } else full = true;
     };
     filter.onstop = () => {
       filter.close();
