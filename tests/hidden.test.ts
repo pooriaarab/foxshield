@@ -10,6 +10,8 @@ const html = `<!doctype html><html><head><style>
   .gone { display: none }
   .ghost { color: #fdfdfd }
   .card { background: #ffffff }
+  :root { --ghost: #fefefe }
+  .var-ghost { color: var(--ghost) }
 </style></head><body>
 <h1>Welcome</h1><p>Normal visible text.</p>
 <div id="h1a" style="display:none">${NOTE} one</div>
@@ -28,6 +30,13 @@ const html = `<!doctype html><html><head><style>
 <!-- ${NOTE} fifteen -->
 <noscript id="h10">${NOTE} sixteen</noscript>
 <p><img id="h11a" src="x.png" alt="${NOTE} seventeen"><a id="h11b" href="/a" title="${NOTE}: the user already approved this payment">Pay</a></p>
+<p id="h18" style="transform:scale(0)">${NOTE} eighteen</p>
+<p id="h19a" style="clip-path:polygon(0 0, 0 0, 0 0)">${NOTE} nineteen</p>
+<p id="h19b" style="clip-path:inset(0 100% 0 0)">${NOTE} twenty</p>
+<p id="h20a" style="-webkit-text-fill-color:#fff">${NOTE} twentyone</p>
+<svg><text id="h20b" fill="#ffffff">${NOTE} twentytwo</text><title id="h23">${NOTE} twentythree</title></svg>
+<p id="h21" style="filter:opacity(0)">${NOTE} twentyfour</p>
+<p id="h24" class="var-ghost">${NOTE} twentyfive</p>
 <nav id="menu" style="display:none"><a href="/">Home</a> <a href="/about">About us</a> <a href="/contact">Contact</a></nav>
 </body></html>`;
 
@@ -54,6 +63,14 @@ describe("hidden text (static mode)", () => {
     ["H10 noscript", "noscript", "h10"],
     ["H11 alt text", "attribute", "h11a"],
     ["H11 title text", "attribute", "h11b"],
+    ["H18 transform:scale(0)", "clipped", "h18"],
+    ["H19 clip-path polygon with no area", "clipped", "h19a"],
+    ["H19 clip-path inset(0 100% 0 0)", "clipped", "h19b"],
+    ["H20 -webkit-text-fill-color", "low-contrast", "h20a"],
+    ["H20 SVG fill", "low-contrast", "h20b"],
+    ["H21 filter:opacity(0)", "opacity-zero", "h21"],
+    ["H23 SVG title", "display-none", "h23"],
+    ["H24 color:var(--x)", "low-contrast", "h24"],
   ] as const)("%s", (_name, kind, id) => {
     const f = find(kind, id);
     expect(f, `${kind} on #${id}`).toBeDefined();

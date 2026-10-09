@@ -16,7 +16,8 @@ export type FindingKind =
   | "comment"
   | "noscript"
   | "attribute"
-  | "pseudo-content";
+  | "pseudo-content"
+  | "covered";
 
 export interface Finding {
   kind: FindingKind;
