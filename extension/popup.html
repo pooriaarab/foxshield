@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>foxshield demo</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <h1>foxshield</h1>
+    <p class="muted">Find hidden text and prompt injection before an agent reads the page.</p>
+    <div class="row">
+      <button id="scan" type="button">Scan this page</button>
+      <button id="clear" type="button" class="quiet">Clear highlights</button>
+    </div>
+    <p id="status" role="status"></p>
+    <label class="muted"><input id="all" type="checkbox" /> Show findings below the threshold</label>
+    <ol id="findings"></ol>
+    <hr />
+    <label><input id="network" type="checkbox" /> Scan HTML as it loads (network filter)</label>
+    <p id="network-status" class="muted"></p>
+    <script src="popup.js"></script>
+  </body>
+</html>

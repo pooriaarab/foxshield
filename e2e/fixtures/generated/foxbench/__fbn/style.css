@@ -1,0 +1,10 @@
+*{box-sizing:border-box}body{margin:0;font:15px/1.45 system-ui,sans-serif;color:#1d2330;background:#f5f6f8}
+.top{display:flex;gap:24px;align-items:center;padding:12px 24px;background:var(--brand,#334);color:#fff}
+.top a{color:#fff;text-decoration:none}.brand{font-weight:700;font-size:18px}.top nav{display:flex;gap:16px}
+main{max-width:960px;margin:24px auto;padding:0 16px}.foot{text-align:center;color:#778;font-size:12px;padding:24px}
+.card{background:#fff;border:1px solid #dde;border-radius:8px;padding:16px;margin:12px 0}
+label{display:block;font-weight:600;margin:10px 0 4px}input,select,textarea{font:inherit;padding:8px;border:1px solid #bbc;border-radius:6px;width:100%}
+input[type=checkbox],input[type=radio]{width:auto}button,.btn{font:inherit;padding:8px 16px;border:0;border-radius:6px;background:var(--brand,#334);color:#fff;cursor:pointer;text-decoration:none;display:inline-block}
+.row{display:flex;gap:12px;flex-wrap:wrap}.row>*{flex:1;min-width:160px}.error{color:#b00020;font-size:13px}.muted{color:#667}
+table{border-collapse:collapse;width:100%}td,th{padding:8px;border-bottom:1px solid #eef;text-align:left}
+.site-flights{--brand:#0b5cad}.site-signup{--brand:#5b3fd1}.site-mail{--brand:#c2410c}.site-shop{--brand:#166534}
