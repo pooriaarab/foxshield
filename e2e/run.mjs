@@ -108,6 +108,37 @@ try {
   check("X3 the scan runs through scripting.executeScript", true, live.every((r) => r.report.mode === "live"));
   check("X1 all four trap pages are caught", 4, record.live.summary.trapsCaught);
   check("H17 no flagged finding on a normal page", 0, record.live.summary.normalPagesFlagged);
+
+  // 5. The optional network filter: it reads HTML as it arrives and passes the bytes through (N1, N2).
+  const load = async (url) => {
+    const tab = await fox.open(url);
+    const seen = await tab.evaluate(() => ({ ms: performance.getEntriesByType("navigation")[0].duration, html: document.documentElement.outerHTML }));
+    await tab.close();
+    return seen;
+  };
+  const median = (xs) => xs.toSorted((a, b) => a - b)[Math.floor(xs.length / 2)];
+  record.network = [];
+  for (const name of ["trap-mail-m8", "shop-giftcard", "flights-results"]) {
+    const url = `${bench.url}/${name}.html`;
+    const runs = { off: [], on: [] };
+    let same = true;
+    for (let i = 0; i < 7; i++) {
+      for (const mode of ["off", "on"]) {
+        await control.evaluate((on) => browser.storage.local.set({ networkScan: on }), mode === "on");
+        const seen = await load(`${url}?run=${i}${mode}`);
+        runs[mode].push(seen);
+      }
+      same &&= runs.on[i].html === runs.off[i].html;
+    }
+    const scanned = await control.evaluate((u) => browser.runtime.sendMessage({ type: "network", url: u }), `${url}?run=6on`);
+    record.network.push({ page: name, medianMsOff: median(runs.off.map((r) => r.ms)), medianMsOn: median(runs.on.map((r) => r.ms)),
+      sameHtml: same, flagged: scanned?.flagged ?? null, scanMs: scanned?.ms ?? null });
+  }
+  await control.evaluate(() => browser.storage.local.set({ networkScan: false }));
+  check("N1 the page is the same with the network filter on", true, record.network.every((n) => n.sameHtml));
+  check("N1 the network filter scans each HTML response", true, record.network.every((n) => typeof n.flagged === "number"));
+  check("the network filter flags the mail trap", true, record.network[0].flagged >= 1);
+  check("the network filter flags nothing on normal pages", 0, record.network[1].flagged + record.network[2].flagged);
 } catch (error) {
   record.error = error instanceof Error ? error.message : String(error);
 } finally {
@@ -121,10 +152,12 @@ record.passed = !record.error && record.checks.length > 0 && record.checks.every
 const path = writeArtifact("artifacts", "e2e", record);
 // A short Markdown copy of the two tables: small enough to commit.
 const md = `# foxshield on foxbench (${record.startedAt.slice(0, 10)})\n\nThreshold ${THRESHOLD}. Pages from ${source}. E2E ${record.passed ? "passed" : "failed"}.\n\n`
+  + `${record.network ? `## Network filter\n\n| Page | Median load ms, filter off | Median load ms, filter on | Scan ms | Flagged | Same HTML |\n|---|---|---|---|---|---|\n${record.network.map((n) => `| ${n.page} | ${n.medianMsOff} | ${n.medianMsOn} | ${n.scanMs} | ${n.flagged} | ${n.sameHtml} |`).join("\n")}\n\n` : ""}`
   + `## Live: Firefox ${record.firefox ?? "?"}, through the demo extension\n\n${record.live ? table(record.live) : record.error}\n\n## Static: scanHtml in Node\n\n${table(record.static)}\n`;
 writeFileSync(path.replace(/e2e-(\d{4}-\d\d-\d\d)\.json$/, "precision-recall-$1.md"), md);
 for (const c of record.checks) console.log(`${c.ok ? "ok " : "BAD"} ${c.name}: ${JSON.stringify(c.actual)}`);
 if (record.live) console.log(`\nLive (Firefox ${record.firefox}, via the extension):\n${table(record.live)}`);
 console.log(`\nStatic (scanHtml in Node):\n${table(record.static)}`);
+if (record.network) console.log(`\nNetwork filter (median load ms off -> on):\n${record.network.map((n) => `${n.page}: ${n.medianMsOff} -> ${n.medianMsOn}, scan ${n.scanMs} ms, flagged ${n.flagged}`).join("\n")}`);
 console.log(`${record.passed ? "PASS" : "FAIL"}${record.error ? `: ${record.error}` : ""} | ${path}`);
 process.exitCode = record.passed ? 0 : 1;
