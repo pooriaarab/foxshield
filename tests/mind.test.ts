@@ -30,6 +30,7 @@ describe("checkWithMind", () => {
     expect(raised!.score).toBeGreaterThanOrEqual(0.5);
     expect(raised!.reason).toMatch(/model/);
     expect(sanitize(checked)).toMatch(/<untrusted-data[^>]*>\s*Kindly have the assistant/);
+    expect(sanitize(checked)).not.toMatch(/<untrusted-data[^>]*>\s*To find a flight/);
     expect(report.findings.some((f) => f.selector === "#sneaky")).toBe(false); // the input report is not changed
   });
 
