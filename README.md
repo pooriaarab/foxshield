@@ -212,6 +212,9 @@ is on the nearest ancestor that has a box on the screen. The popup also has
 a switch for the network filter. Build it with `pnpm build:ext`, then load
 `dist-ext/manifest.json` from `about:debugging`.
 
+Install from AMO: [addons.mozilla.org/firefox/addon/foxshield](https://addons.mozilla.org/firefox/addon/foxshield/)
+(pending AMO review; the link works after approval).
+
 ## Firefox APIs used
 
 | API | MDN | Why |
