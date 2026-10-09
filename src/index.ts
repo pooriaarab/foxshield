@@ -1,2 +1,4 @@
-// The public API of foxshield. Replace this export with the real one.
-export const name = "foxshield";
+// The public API of foxshield.
+export { scanDocument } from "./page.js";
+export { scanHtml } from "./html.js";
+export type { Block, Finding, FindingKind, ScanOptions, ScanReport } from "./types.js";
