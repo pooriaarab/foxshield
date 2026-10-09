@@ -14,6 +14,7 @@ import { scanDocument, scanHtml } from "../dist/index.js";
 import { score, table } from "./score.mjs";
 
 const THRESHOLD = 0.5;
+const median = (xs) => xs.toSorted((a, b) => a - b)[Math.floor(xs.length / 2)];
 const shotsAt = process.argv.indexOf("--screenshots");
 const shots = shotsAt > 0 ? process.argv[shotsAt + 1] : null;
 const record = { startedAt: new Date().toISOString(), threshold: THRESHOLD, checks: [] };
@@ -24,10 +25,10 @@ record.foxbench = source;
 
 // BiDi cannot capture a moz-extension: page. So this serves the built popup
 // over http with a stub `browser` that answers with a real scan result.
-async function popupShot(result, path) {
+async function popupShot(result, path, network = null) {
   const dir = mkdtempSync(join(tmpdir(), "fsh-popup-"));
   cpSync("dist-ext", dir, { recursive: true });
-  const stub = `<script>window.browser={tabs:{query:async()=>[{id:1}]},runtime:{sendMessage:async(m)=>m.type==="scan"?${JSON.stringify(result).replace(/</g, "\\u003c")}:0}};</script>`;
+  const stub = `<script>window.browser={tabs:{query:async()=>[{id:1,url:"x"}]},storage:{local:{get:async()=>({networkScan:true}),set:async()=>{}}},runtime:{sendMessage:async(m)=>m.type==="scan"?${JSON.stringify(result).replace(/</g, "\\u003c")}:m.type==="network"?${JSON.stringify(network)}:0}};</script>`;
   writeFileSync(join(dir, "index.html"), readFileSync(join(dir, "popup.html"), "utf8").replace("<script", () => `${stub}<script`));
   const server = await serve(dir);
   try {
@@ -47,6 +48,7 @@ const site = await serve("e2e/site");
 const other = await serve("e2e/site");
 const bench = await serve(FIXTURES);
 let fox;
+let shopResult = null;
 try {
   fox = await launch({ extension: "dist-ext", headless: !process.argv.includes("--headed") });
   record.firefox = await fox.browser.version();
@@ -101,6 +103,7 @@ try {
       check("popup lists the flagged finding", "low-contrast", await poll(popup, () => document.querySelector("#findings li.high .kind")?.textContent));
       await popup.close();
       if (shots) await popupShot(result, `${shots}/popup-trap-shop-mug.png`);
+      shopResult = result;
     }
     await tab.close();
   }
@@ -108,6 +111,39 @@ try {
   check("X3 the scan runs through scripting.executeScript", true, live.every((r) => r.report.mode === "live"));
   check("X1 all four trap pages are caught", 4, record.live.summary.trapsCaught);
   check("H17 no flagged finding on a normal page", 0, record.live.summary.normalPagesFlagged);
+
+  // 5. The optional network filter: it reads HTML as it arrives and passes the bytes through (N1, N2).
+  const load = async (url) => {
+    const tab = await fox.open(url);
+    const seen = await tab.evaluate(() => ({ ms: performance.getEntriesByType("navigation")[0].duration, html: document.documentElement.outerHTML }));
+    await tab.close();
+    return seen;
+  };
+  record.network = [];
+  for (const name of ["trap-mail-m8", "shop-giftcard", "flights-results", "trap-shop-mug"]) {
+    const url = `${bench.url}/${name}.html`;
+    const runs = { off: [], on: [] };
+    let same = true;
+    for (let i = 0; i < 7; i++) {
+      for (const mode of ["off", "on"]) {
+        await control.evaluate((on) => browser.storage.local.set({ networkScan: on }), mode === "on");
+        const seen = await load(`${url}?run=${i}${mode}`);
+        runs[mode].push(seen);
+      }
+      same &&= runs.on[i].html === runs.off[i].html;
+    }
+    // The scan runs when the response ends, so it can finish just after the load event.
+    const scanned = await poll(control, (u) => browser.runtime.sendMessage({ type: "network", url: u }), `${url}?run=6on`, 5000).catch(() => null);
+    if (shots && name === "trap-shop-mug") await popupShot(shopResult, `${shots}/popup-network.png`, scanned);
+    record.network.push({ page: name, medianMsOff: median(runs.off.map((r) => r.ms)), medianMsOn: median(runs.on.map((r) => r.ms)),
+      sameHtml: same, flagged: scanned?.flagged ?? null, scanMs: scanned?.ms ?? null });
+  }
+  await control.evaluate(() => browser.storage.local.set({ networkScan: false }));
+  check("N1 the page is the same with the network filter on", true, record.network.every((n) => n.sameHtml));
+  check("N1 the network filter scans each HTML response", true, record.network.every((n) => typeof n.flagged === "number"));
+  check("the network filter flags the mail trap", true, record.network[0].flagged >= 1);
+  check("the network filter flags nothing on normal pages", 0, record.network[1].flagged + record.network[2].flagged);
+  check("the network filter flags the white-on-white shop trap", true, record.network[3].flagged >= 1);
 } catch (error) {
   record.error = error instanceof Error ? error.message : String(error);
 } finally {
@@ -121,10 +157,12 @@ record.passed = !record.error && record.checks.length > 0 && record.checks.every
 const path = writeArtifact("artifacts", "e2e", record);
 // A short Markdown copy of the two tables: small enough to commit.
 const md = `# foxshield on foxbench (${record.startedAt.slice(0, 10)})\n\nThreshold ${THRESHOLD}. Pages from ${source}. E2E ${record.passed ? "passed" : "failed"}.\n\n`
+  + `${record.network ? `## Network filter\n\n| Page | Median load ms, filter off | Median load ms, filter on | Scan ms | Flagged | Same HTML |\n|---|---|---|---|---|---|\n${record.network.map((n) => `| ${n.page} | ${n.medianMsOff} | ${n.medianMsOn} | ${n.scanMs} | ${n.flagged} | ${n.sameHtml} |`).join("\n")}\n\n` : ""}`
   + `## Live: Firefox ${record.firefox ?? "?"}, through the demo extension\n\n${record.live ? table(record.live) : record.error}\n\n## Static: scanHtml in Node\n\n${table(record.static)}\n`;
 writeFileSync(path.replace(/e2e-(\d{4}-\d\d-\d\d)\.json$/, "precision-recall-$1.md"), md);
 for (const c of record.checks) console.log(`${c.ok ? "ok " : "BAD"} ${c.name}: ${JSON.stringify(c.actual)}`);
 if (record.live) console.log(`\nLive (Firefox ${record.firefox}, via the extension):\n${table(record.live)}`);
 console.log(`\nStatic (scanHtml in Node):\n${table(record.static)}`);
+if (record.network) console.log(`\nNetwork filter (median load ms off -> on):\n${record.network.map((n) => `${n.page}: ${n.medianMsOff} -> ${n.medianMsOn}, scan ${n.scanMs} ms, flagged ${n.flagged}`).join("\n")}`);
 console.log(`${record.passed ? "PASS" : "FAIL"}${record.error ? `: ${record.error}` : ""} | ${path}`);
 process.exitCode = record.passed ? 0 : 1;

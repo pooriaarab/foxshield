@@ -44,3 +44,14 @@ $("clear").addEventListener("click", async () => {
 });
 
 $("all").addEventListener("change", (e) => document.body.classList.toggle("all", e.target.checked));
+
+// The optional network filter: a switch, and what it found when this page loaded.
+browser.storage.local.get("networkScan").then(async ({ networkScan }) => {
+  $("network").checked = Boolean(networkScan);
+  const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+  const seen = tab?.url ? await browser.runtime.sendMessage({ type: "network", url: tab.url }) : null;
+  $("network-status").textContent = seen
+    ? `When this page loaded: ${seen.flagged} flagged in ${seen.bytes} bytes (scan took ${seen.ms} ms).`
+    : networkScan ? "Reload the page to scan it as it loads." : "Off. Turn it on to scan each page before it renders.";
+});
+$("network").addEventListener("change", (e) => browser.storage.local.set({ networkScan: e.target.checked }));

@@ -14,3 +14,4 @@ body.all li.low { display: block; }
 .score { float: right; font-variant-numeric: tabular-nums; }
 .reason { color: #5b5b66; font-size: 12px; margin: 2px 0; }
 .text { font-size: 12px; margin: 0; word-break: break-word; }
+hr { border: 0; border-top: 1px solid #e0e0e6; margin: 10px 0; }

@@ -5,3 +5,4 @@ export type { Block, Finding, FindingKind, ScanOptions, ScanReport } from "./typ
 export { sanitize, type SanitizeOptions } from "./sanitize.js";
 export { checkWithMind, type MindCheckOptions, type MindLike, type MindReport } from "./mind.js";
 export { clearOverlay, showOverlay, type OverlayItem } from "./overlay.js";
+export { scanResponse, type ResponseReport, type ResponseScanOptions, type StreamFilterLike } from "./network.js";
