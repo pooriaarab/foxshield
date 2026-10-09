@@ -60,6 +60,7 @@ try {
   record.techniques = { mode: report.mode, nodes: report.nodes, ms: report.ms, skippedFrames: report.skippedFrames, findings: report.findings };
   const has = (kind, id) => report.findings.some((f) => f.kind === kind && f.selector.includes(id));
   check("scan runs in live mode", "live", report.mode);
+  check("H22 the scan puts the scroll position back", 0, await page.evaluate(() => scrollY));
   for (const [kind, id] of [
     ["display-none", "#h-none"], ["display-none", "#h-attr"], ["visibility-hidden", "#h-vis"], ["opacity-zero", "#h-opacity"],
     ["offscreen", "#h-offscreen"], ["offscreen", "#h-indent"], ["clipped", "#h-clip"], ["clipped", "#h-clippath"],

@@ -155,10 +155,41 @@ export function scanDocument(target?: Document | ScanOptions, maybeOptions?: Sca
     const n = parseFloat(m[1]!);
     return m[2] === "em" ? n * base : m[2] === "rem" ? n * 16 : m[2] === "%" ? (n * base) / 100 : n;
   };
-  const CLIP_PATH = /inset\(\s*(4\d|50|[5-9]\d|100)(\.\d+)?%|circle\(\s*0/;
+  /** True when a clip-path value leaves (almost) no area: inset that meets in the middle, a flat polygon, a zero circle. */
+  function clipNone(value: string | undefined): boolean {
+    const v = (value ?? "").toLowerCase();
+    if (/circle\(\s*0(px|%)?\b|ellipse\(\s*0(px|%)?\s/.test(v)) return true;
+    const inset = v.match(/inset\(([^)]*)\)/);
+    if (inset) {
+      const n = inset[1]!.split(/\s+round\s+/)[0]!.trim().split(/\s+/).map((x) => (x.endsWith("%") ? parseFloat(x) : 0)); // px cannot be compared with the box here: count it as 0
+      const [t = 0, r = t, b = t, l = r] = n;
+      return t + b >= 99 || l + r >= 99;
+    }
+    const poly = v.match(/polygon\(([^)]*)\)/);
+    if (!poly) return false;
+    const pts = poly[1]!.replace(/^\s*(nonzero|evenodd)\s*,/, "").split(",").map((p) => p.trim().split(/\s+/).map((x) => parseFloat(x)));
+    if (pts.length < 3 || pts.some((p) => p.length !== 2 || p.some(Number.isNaN))) return false;
+    let area = 0;
+    pts.forEach((p, i) => { const q = pts[(i + 1) % pts.length]!; area += p[0]! * q[1]! - q[0]! * p[1]!; });
+    return Math.abs(area) / 2 < 1;
+  }
+  const filterOpacity = (v: string | undefined) => {
+    let o = 1;
+    for (const m of (v ?? "").matchAll(/opacity\(\s*([\d.]+)(%?)\s*\)/g)) o *= m[2] ? parseFloat(m[1]!) / 100 : parseFloat(m[1]!);
+    return o;
+  };
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  /** The color that paints the text: text-fill-color, or fill and fill-opacity for SVG, or color. */
+  const paint = (el: Element, color: string | undefined, fill: string | undefined, fillOpacity: string | undefined, textFill: string | undefined) => {
+    const svg = el.namespaceURI === SVG_NS || (/^(text|tspan|textpath)$/i.test(el.localName) && !!el.closest?.("svg"));
+    const c = svg && fill && fill !== "none" ? parseColor(fill) : parseColor(textFill) ?? parseColor(color);
+    if (c && svg && fillOpacity) c[3] = c[3] * (parseFloat(fillOpacity) || 0);
+    return c;
+  };
   const CLIP_RECT = /rect\(\s*0(px)?[\s,]+0(px)?[\s,]+0(px)?[\s,]+0(px)?\s*\)|rect\(\s*1px[\s,]+1px/;
 
   let sheet: [string, Record<string, string>][] | null = null;
+  const customs: Record<string, string> = {};
   const parseDecls = (text: string) => {
     const out: Record<string, string> = {};
     for (const part of text.split(";")) {
@@ -173,6 +204,8 @@ export function scanDocument(target?: Document | ScanOptions, maybeOptions?: Sca
       const css = Array.from(doc.querySelectorAll("style"), (s) => s.textContent ?? "").join("\n")
         .replace(/\/\*[\s\S]*?\*\//g, "").replace(/@[^{;]+\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g, "");
       sheet = Array.from(css.matchAll(/([^{}]+)\{([^{}]*)\}/g), (m) => [m[1]!.trim(), parseDecls(m[2]!)] as [string, Record<string, string>]);
+      // Custom properties, page-wide: the last one set in a <style> rule wins. Ancestors' inline ones are not tracked.
+      for (const [, decls] of sheet) for (const [k, v] of Object.entries(decls)) if (k.startsWith("--")) customs[k] = v;
     }
     const d: Record<string, string> = {};
     for (const [sel, decls] of sheet) {
@@ -180,6 +213,11 @@ export function scanDocument(target?: Document | ScanOptions, maybeOptions?: Sca
     }
     Object.assign(d, parseDecls(el.getAttribute("style") ?? ""));
     if (!d.display && el.hasAttribute("hidden")) d.display = "none";
+    // SVG <title> and <desc> are never drawn (outside <head>; <head> is skipped).
+    if (/^(title|desc)$/.test(el.localName)) d.display = "none";
+    for (const [k, v] of Object.entries(d)) {
+      if (v.includes("var(")) d[k] = v.replace(/var\(\s*(--[\w-]+)\s*(?:,\s*([^)]*))?\)/g, (_, name: string, fallback?: string) => customs[name] ?? fallback ?? "");
+    }
     return d;
   }
   function lookOf(el: Element, ctx: Ctx): Look {
@@ -188,13 +226,23 @@ export function scanDocument(target?: Document | ScanOptions, maybeOptions?: Sca
       const cs = win.getComputedStyle(el);
       const r = el.getBoundingClientRect();
       const box = (r.width <= 1 || r.height <= 1) && /hidden|clip/.test(`${cs.overflowX} ${cs.overflowY}`);
+      // A box with no area that still has client rects (scale(0), zero size): check that its text paints nowhere,
+      // so a zero-height parent of floated children is not called hidden.
+      let flat = false;
+      if (r.width * r.height < 1 && cs.display !== "contents" && el.getClientRects().length > 0 && el.textContent?.trim()) {
+        const range = el.ownerDocument.createRange();
+        range.selectNodeContents(el);
+        const t = range.getBoundingClientRect();
+        flat = t.width * t.height < 1;
+      }
       const bg = parseColor(cs.backgroundColor);
       return {
-        display: cs.display, vis: cs.visibility, opacity: parseFloat(cs.opacity) || 0, font: parseFloat(cs.fontSize), color: parseColor(cs.color),
+        display: cs.display, vis: cs.visibility, opacity: (parseFloat(cs.opacity) || 0) * filterOpacity(cs.filter), font: parseFloat(cs.fontSize),
+        color: paint(el, cs.color, cs.getPropertyValue("fill"), cs.getPropertyValue("fill-opacity"), cs.getPropertyValue("-webkit-text-fill-color")),
         bg: cs.backgroundImage !== "none" ? null : bg && bg[3] > 0 && ctx.bg ? over(bg, ctx.bg) : ctx.bg,
         offscreen: r.right + win.scrollX <= 0 || r.bottom + win.scrollY <= 0 || px(cs.textIndent) <= -500
           || (/absolute|fixed/.test(cs.position) && px(cs.left) >= 5000),
-        clipped: box || CLIP_PATH.test(cs.clipPath) || CLIP_RECT.test(cs.clip) || (r.width * r.height < 1 && cs.display !== "contents" && r.width + r.height > 0),
+        clipped: box || flat || clipNone(cs.clipPath) || CLIP_RECT.test(cs.clip),
         unrendered: el.getClientRects().length === 0 && cs.display !== "contents",
       };
     }
@@ -204,20 +252,22 @@ export function scanDocument(target?: Document | ScanOptions, maybeOptions?: Sca
     const far = (k: string) => px(d[k]) <= -500;
     const tiny = (k: string) => px(d[k]) <= 1;
     return {
-      display: d.display ?? "", vis: d.visibility ?? ctx.vis, opacity: d.opacity ? parseFloat(d.opacity) : 1, font: Number.isNaN(font) ? ctx.font : font,
-      color: d.color ? parseColor(d.color) : ctx.color,
+      display: d.display ?? "", vis: d.visibility ?? ctx.vis, opacity: (d.opacity ? parseFloat(d.opacity) : 1) * filterOpacity(d.filter),
+      font: Number.isNaN(font) ? ctx.font : font,
+      color: paint(el, d.color, d.fill ?? el.getAttribute("fill") ?? undefined, d["fill-opacity"] ?? el.getAttribute("fill-opacity") ?? undefined, d["-webkit-text-fill-color"])
+        ?? ctx.color,
       bg: /url\(|gradient/.test(`${d.background ?? ""} ${d["background-image"] ?? ""}`) ? null : ownBg && ownBg[3] > 0 && ctx.bg ? over(ownBg, ctx.bg) : ctx.bg,
       offscreen: (/absolute|fixed|relative/.test(d.position ?? "") && (far("left") || far("top") || far("right")))
         || far("text-indent") || px(d["margin-left"]) <= -1000 || /translate[xy]?\(\s*-\d{3,}/.test(d.transform ?? ""),
       clipped: ((tiny("width") || tiny("height") || tiny("max-height")) && /hidden|clip/.test(d.overflow ?? d["overflow-x"] ?? d["overflow-y"] ?? ""))
-        || CLIP_PATH.test(d["clip-path"] ?? "") || CLIP_RECT.test(d.clip ?? ""),
+        || clipNone(d["clip-path"]) || CLIP_RECT.test(d.clip ?? "") || /scale[xy]?\(\s*0(\.0*)?\s*[,)]/.test(d.transform ?? ""),
       unrendered: false,
     };
   }
 
   // ---- Hidden text --------------------------------------------------------
   const BASE: Partial<Record<FindingKind, number>> = { "display-none": 0.15, "not-rendered": 0.1, "visibility-hidden": 0.15, "opacity-zero": 0.25,
-    offscreen: 0.25, clipped: 0.2, "tiny-font": 0.3, "low-contrast": 0.35, "aria-hidden": 0.05, comment: 0.1, noscript: 0.1, attribute: 0.05, "pseudo-content": 0.1 };
+    offscreen: 0.25, clipped: 0.2, "tiny-font": 0.3, "low-contrast": 0.35, "aria-hidden": 0.05, comment: 0.1, noscript: 0.1, attribute: 0.05, "pseudo-content": 0.1, covered: 0.3 };
   const ADDRESS = /\S+@[\w-]+\.[\w.-]+|https?:\/\/|\bwww\.|\b[a-z0-9-]+\.[a-z]{2,}\//i;
   function hidden(kind: FindingKind, raw: string, selector: string, extra: string[] = [], links = "") {
     if (squash(raw).replace(/[^\p{L}\p{N}]/gu, "").length < 3) return;
@@ -245,6 +295,33 @@ export function scanDocument(target?: Document | ScanOptions, maybeOptions?: Sca
     return [text, links.join(" ")];
   }
   /** The hiding kind for text directly inside an element, from its own style. */
+  const scrolled = new Map<Window, [number, number]>();
+  /** Live mode: is an opaque box drawn over the middle of this element's text? Only text in the viewport can be checked. */
+  function covered(el: Element): FindingKind | null {
+    let text = false;
+    for (let c = el.firstChild; c && !text; c = c.nextSibling) text = c.nodeType === 3 && /\S/.test(c.nodeValue ?? "");
+    if (!text) return null;
+    const win = el.ownerDocument.defaultView;
+    if (!win) return null;
+    let r = el.getBoundingClientRect();
+    if (r.top < 0 || r.top + 10 >= win.innerHeight) {
+      // Hit tests work only in the viewport. Scroll there now; the scroll goes back before the scan returns,
+      // in the same task, so the page never paints the moved position.
+      if (!scrolled.has(win)) scrolled.set(win, [win.scrollX, win.scrollY]);
+      win.scrollTo({ left: win.scrollX, top: Math.max(0, r.top + win.scrollY - win.innerHeight / 3), behavior: "instant" });
+      r = el.getBoundingClientRect();
+    }
+    const x = r.left + r.width / 2;
+    const y = r.top + Math.min(r.height / 2, 10);
+    if (x < 0 || y < 0 || x >= win.innerWidth || y >= win.innerHeight) return null;
+    const root = el.getRootNode() as Document | ShadowRoot;
+    const hit = root.elementFromPoint(x, y);
+    if (!hit || hit === el || el.contains(hit) || hit.contains(el)) return null;
+    const cs = win.getComputedStyle(hit);
+    const bg = parseColor(cs.backgroundColor);
+    const opaque = (bg !== null && bg[3] >= 0.9) || cs.backgroundImage !== "none" || /^(img|video|canvas|iframe|object|embed)$/.test(hit.localName);
+    return opaque && (parseFloat(cs.opacity) || 0) >= 0.9 ? "covered" : null;
+  }
   function ownerKind(ctx: Ctx): FindingKind | null {
     if (/hidden|collapse/.test(ctx.vis)) return "visibility-hidden";
     if (ctx.opacity <= 0.05) return "opacity-zero";
@@ -260,7 +337,8 @@ export function scanDocument(target?: Document | ScanOptions, maybeOptions?: Sca
   };
 
   // ---- Walk ---------------------------------------------------------------
-  const SKIP = new Set(["script", "style", "template", "head", "meta", "link", "title", "base"]);
+  // <title> is not here: the one in <head> is skipped with <head>, and an SVG <title> must be read.
+  const SKIP = new Set(["script", "style", "template", "head", "meta", "link", "base"]);
   const BLOCK = new Set(["address", "article", "aside", "blockquote", "body", "button", "caption", "dd", "details", "dialog", "div",
     "dl", "dt", "fieldset", "figcaption", "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "header", "html", "label",
     "legend", "li", "main", "nav", "ol", "option", "p", "pre", "section", "select", "summary", "table", "tbody", "td", "textarea",
@@ -280,7 +358,7 @@ export function scanDocument(target?: Document | ScanOptions, maybeOptions?: Sca
   function walk(node: Element | ShadowRoot, start: Acc, ctx: Ctx, depth: number): Acc {
     let acc = start;
     const owner = node.nodeType === 1 ? (node as Element) : (node as ShadowRoot).host;
-    const kind = ownerKind(ctx);
+    const kind = ownerKind(ctx) ?? (live && node.nodeType === 1 ? covered(node as Element) : null);
     const seen = new Map<string, number>();
     for (let child = node.firstChild; child; child = child.nextSibling) {
       if (truncated) return acc;
@@ -370,6 +448,7 @@ export function scanDocument(target?: Document | ScanOptions, maybeOptions?: Sca
     const look = lookOf(body, ROOT);
     walk(body, rootAcc, { ...ROOT, vis: look.vis, font: look.font, color: look.color, bg: look.bg ?? ROOT.bg }, 0);
   }
+  for (const [win, [x, y]] of scrolled) win.scrollTo({ left: x, top: y, behavior: "instant" });
   for (const acc of order) {
     if (squash(acc.text).length === 0) continue;
     blocks.push(checkVisible(acc.text, acc.spaced, selectorOf(acc.el, acc.prefix)));
