@@ -120,10 +120,17 @@ above 0.5. See [`artifacts/precision-recall-2026-10-09.md`](artifacts/precision-
 | Live (Firefox 157, demo extension) | 1.0 (4 of 4 flagged findings) | 1.0 (4 of 4 trap pages) | 0 of 18 |
 | Static (`scanHtml` in Node) | 1.0 (4 of 4 flagged findings) | 1.0 (4 of 4 trap pages) | 0 of 18 |
 
-The same run loads four pages seven times each with the network filter off
-and on. The HTML is the same both ways. The median load time moved by 5 ms
-or less (for example 31 ms to 36 ms), and the scan after the response took
-8 to 16 ms. These are pages from a local server, so the times are small.
+The same run scans the E2E hiding-technique page, with 19 planted notes. Each
+one uses a different technique, from `display:none` to `transform:
+scale(0)`, SVG `fill`, and a white box drawn over the text. All 19 get a
+finding at or above 0.5, and `sanitize()` drops each one.
+
+The run also loads four pages seven times each with the network filter off
+and on. The HTML is the same both ways. Over several runs, the median load
+time with the filter on stayed within about 15 ms of the time with it off.
+Sometimes it was lower, so the difference is mostly noise. The scan after the
+response usually took 10 to 35 ms, and once took 111 ms. These are small
+pages from a local server, so expect more time on large pages.
 
 Four traps and 18 pages are a small test set. These numbers show that the
 known traps are caught. They do not show how foxshield does on the open web.
@@ -248,6 +255,8 @@ a switch for the network filter. Build it with `pnpm build:ext`, then load
   `<style>` rule set it. On a dark theme set by an external stylesheet,
   light text can get a `low-contrast` finding it does not deserve.
 - A page can change after the scan. Scan again after the page changes.
+- The page can remove the overlay host or draw over it. The popup list still
+  shows every finding, so read the list, not only the boxes.
 - Closed shadow roots and cross-origin iframes are not scanned. The demo scans
   the top frame only; `skippedFrames` counts what it missed.
 - Text in `::before` and `::after` is found in live mode only, and
