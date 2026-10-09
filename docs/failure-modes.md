@@ -90,4 +90,7 @@ E2E test in `e2e/run.mjs` runs the same scanner in a real Firefox.
 | X3 | The page function does not survive `scripting.executeScript` (it uses an outside name). | The scan runs through the extension and returns a report. | E2E |
 | N1 | The network filter changes or breaks the HTML response. | The page bytes reach the browser unchanged. | E2E |
 | N3 | After one chunk does not fit in `maxBytes`, later small chunks are still kept, so the scan reads text with a hole in it. | Keeping stops at the first chunk that does not fit. Every byte still goes to the page. | `tests/network.test.ts` |
+| N4 | The background reads storage on every page load, even with the filter off, and a cached copy lags behind a switch change. | The switch lives in memory. The popup changes it with a message that updates memory before it answers. | E2E |
+| N5 | Network results pile up in `storage.session` with no limit. | At most 50 are kept; the oldest go first. | E2E |
+| X4 | The page removes or covers the overlay host. | Not prevented: the README says so. The popup list still shows every finding. | README |
 | N2 | The network filter makes pages slow. | The E2E artifact reports the load time with and without the filter. | E2E |

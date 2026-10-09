@@ -28,7 +28,7 @@ record.foxbench = source;
 async function popupShot(result, path, network = null) {
   const dir = mkdtempSync(join(tmpdir(), "fsh-popup-"));
   cpSync("dist-ext", dir, { recursive: true });
-  const stub = `<script>window.browser={tabs:{query:async()=>[{id:1,url:"x"}]},storage:{local:{get:async()=>({networkScan:true}),set:async()=>{}}},runtime:{sendMessage:async(m)=>m.type==="scan"?${JSON.stringify(result).replace(/</g, "\\u003c")}:m.type==="network"?${JSON.stringify(network)}:0}};</script>`;
+  const stub = `<script>window.browser={tabs:{query:async()=>[{id:1,url:"x"}]},storage:{local:{get:async()=>({networkScan:true}),set:async()=>{}}},runtime:{sendMessage:async(m)=>m.type==="network-switch"?true:m.type==="scan"?${JSON.stringify(result).replace(/</g, "\\u003c")}:m.type==="network"?${JSON.stringify(network)}:0}};</script>`;
   writeFileSync(join(dir, "index.html"), readFileSync(join(dir, "popup.html"), "utf8").replace("<script", () => `${stub}<script`));
   const server = await serve(dir);
   try {
@@ -135,7 +135,7 @@ try {
     let same = true;
     for (let i = 0; i < 7; i++) {
       for (const mode of ["off", "on"]) {
-        await control.evaluate((on) => browser.storage.local.set({ networkScan: on }), mode === "on");
+        await control.evaluate((on) => browser.runtime.sendMessage({ type: "network-switch", on }), mode === "on");
         const seen = await load(`${url}?run=${i}${mode}`);
         runs[mode].push(seen);
       }
@@ -147,7 +147,13 @@ try {
     record.network.push({ page: name, medianMsOff: median(runs.off.map((r) => r.ms)), medianMsOn: median(runs.on.map((r) => r.ms)),
       sameHtml: same, flagged: scanned?.flagged ?? null, scanMs: scanned?.ms ?? null });
   }
-  await control.evaluate(() => browser.storage.local.set({ networkScan: false }));
+  // N5: results kept in session storage stay capped, however many pages load.
+  await control.evaluate(() => browser.runtime.sendMessage({ type: "network-switch", on: true }));
+  for (let i = 0; i < 55; i++) await (await fox.open(`${bench.url}/home.html?cap=${i}`)).close();
+  await new Promise((r) => setTimeout(r, 500));
+  const kept = await control.evaluate(async () => Object.keys(await browser.storage.session.get(null)).filter((k) => k.startsWith("net:")).length);
+  check("N5 the network results in session storage stay at 50 or fewer", true, kept > 0 && kept <= 50);
+  await control.evaluate(() => browser.runtime.sendMessage({ type: "network-switch", on: false }));
   check("N1 the page is the same with the network filter on", true, record.network.every((n) => n.sameHtml));
   check("N1 the network filter scans each HTML response", true, record.network.every((n) => typeof n.flagged === "number"));
   check("the network filter flags the mail trap", true, record.network[0].flagged >= 1);
