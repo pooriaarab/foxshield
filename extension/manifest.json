@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "foxshield demo",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Find hidden text and prompt injection in a web page before an agent reads it.",
   "browser_specific_settings": {
     "gecko": {
