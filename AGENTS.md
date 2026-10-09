@@ -62,14 +62,25 @@ transcripts. Full rule: pooriaarab/agents-private `rules/fleet-claim.md`.
 ## Layout
 
 ```text
-src/              the library source, built to dist/ by tsc
+src/page.ts       scanDocument: the self-contained page scanner (rules, styles, walk)
+src/overlay.ts    showOverlay / clearOverlay: self-contained highlight boxes
+src/html.ts       scanHtml: Node entry, parses with linkedom
+src/sanitize.ts   sanitize: visible text with flagged blocks wrapped
+src/mind.ts       checkWithMind: the optional model tier
+src/network.ts    scanResponse: the filterResponseData stream scan
+src/cli.ts, bin.ts  the foxshield scan CLI
 tests/            tests for the failure modes in docs/failure-modes.md
 docs/failure-modes.md  every way the code can fail, written before the code
-.github/          CI, release, PR and issue standards
-extension/        the demo extension that shows this repo working in Firefox
-scripts/build-ext.mjs  bundles extension/ into dist-ext/ with esbuild
-e2e/run.mjs       the Firefox E2E test; writes artifacts/e2e-<date>.json
+extension/        the demo extension: Scan this page, overlay, network filter
+e2e/run.mjs       the Firefox E2E test; writes artifacts/e2e-<date>.json and
+                  artifacts/precision-recall-<date>.md
+e2e/fixtures/generated/foxbench/  saved foxbench pages; refresh with
+                  node scripts/capture-foxbench.mjs <built foxbench checkout>
 ```
+
+Functions passed to `scripting.executeScript` (`scanDocument`, `showOverlay`,
+`clearOverlay`) must stay self-contained: no imports or outer names in their
+bodies. The E2E test proves it by running them through the extension.
 
 ## Commands
 
@@ -79,6 +90,7 @@ pnpm ci:local   # lint + typecheck + test + build; run before every hand-off
 pnpm build:ext  # extension/ -> dist-ext/; fails if the manifest and package.json versions differ
 pnpm lint:ext   # web-ext lint on dist-ext/ (part of ci:local)
 pnpm e2e        # Firefox E2E; set FIREFOX if Firefox is not in the usual place
+pnpm e2e -- --screenshots <dir>  # also save the overlay and popup screenshots
 ```
 
 ## Testing
