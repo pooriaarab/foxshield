@@ -63,7 +63,8 @@ E2E test in `e2e/run.mjs` runs the same scanner in a real Firefox.
 | S4 | The page closes the wrapper early with its own `</untrusted-data>`. | Tags in page text are escaped. | `tests/sanitize.test.ts` |
 | S5 | Zero-width and bidi characters pass into the output. | They are removed. | `tests/sanitize.test.ts` |
 | M1 | The model tier fails or times out, and the scan fails with it. | The heuristic report comes back with `mind.error` set. | `tests/mind.test.ts` |
-| M2 | The model tier cannot lower a false positive or raise a missed block. | The model score blends into each finding, and a block the model calls an injection becomes a finding. | `tests/mind.test.ts` |
+| M2 | The model tier cannot raise a missed block. | A block the model calls an injection becomes a finding, and a finding the model scores higher goes up. | `tests/mind.test.ts` |
+| M4 | The page tells the model to answer 0, and the model's low score pulls a rule hit below the threshold. | The model can only raise a score. It never lowers one. | `tests/mind.test.ts` |
 | M3 | foxshield needs foxmind installed to run. | foxmind is optional. The model tier takes any object with a `classify` method. | `tests/mind.test.ts` |
 
 ## CLI
