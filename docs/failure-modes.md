@@ -63,6 +63,7 @@ E2E test in `e2e/run.mjs` runs the same scanner in a real Firefox.
 | S2 | `sanitize()` keeps hidden text. | Hidden text is not in the output. | `tests/sanitize.test.ts` |
 | S3 | Visible injected text goes through as normal text. | It is wrapped in `<untrusted-data>` with the reason. | `tests/sanitize.test.ts` |
 | S4 | The page closes the wrapper early with its own `</untrusted-data>`. | Tags in page text are escaped. | `tests/sanitize.test.ts` |
+| S6 | A closing tag with spaces (`< /untrusted-data>`) gets past the escape. | Any `<`, spaces, optional `/`, spaces, `untrusted-data` is escaped. | `tests/sanitize.test.ts` |
 | S5 | Zero-width and bidi characters pass into the output. | They are removed. | `tests/sanitize.test.ts` |
 | M1 | The model tier fails or times out, and the scan fails with it. | The heuristic report comes back with `mind.error` set. | `tests/mind.test.ts` |
 | M2 | The model tier cannot raise a missed block. | A block the model calls an injection becomes a finding, and a finding the model scores higher goes up. | `tests/mind.test.ts` |
@@ -76,6 +77,8 @@ E2E test in `e2e/run.mjs` runs the same scanner in a real Firefox.
 | C1 | The CLI exits 0 on a page with findings at or above the threshold. | Exit 1. | `tests/cli.test.ts` |
 | C2 | The CLI exits 1 on a clean page, so CI fails for nothing. | Exit 0. | `tests/cli.test.ts` |
 | C3 | A missing file or a bad URL looks like a clean page. | Exit 2 with a message on stderr. | `tests/cli.test.ts` |
+| C5 | A later file fails, and the results for files already scanned are lost. | The CLI prints what it scanned, then the error, and exits 2. | `tests/cli.test.ts` |
+| C6 | `--threshold ""` reads as 0, so every finding fails the build. | An empty or non-numeric threshold exits 2. | `tests/cli.test.ts` |
 | C4 | `--json` output does not parse. | One JSON object on stdout. | `tests/cli.test.ts` |
 
 ## Demo extension and network layer
@@ -86,4 +89,5 @@ E2E test in `e2e/run.mjs` runs the same scanner in a real Firefox.
 | X2 | The highlight overlay changes the page or can be read by page scripts. | The overlay lives in a closed shadow root on one host element. Clear removes it. | E2E |
 | X3 | The page function does not survive `scripting.executeScript` (it uses an outside name). | The scan runs through the extension and returns a report. | E2E |
 | N1 | The network filter changes or breaks the HTML response. | The page bytes reach the browser unchanged. | E2E |
+| N3 | After one chunk does not fit in `maxBytes`, later small chunks are still kept, so the scan reads text with a hole in it. | Keeping stops at the first chunk that does not fit. Every byte still goes to the page. | `tests/network.test.ts` |
 | N2 | The network filter makes pages slow. | The E2E artifact reports the load time with and without the filter. | E2E |
