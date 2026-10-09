@@ -28,7 +28,7 @@ record.foxbench = source;
 async function popupShot(result, path, network = null) {
   const dir = mkdtempSync(join(tmpdir(), "fsh-popup-"));
   cpSync("dist-ext", dir, { recursive: true });
-  const stub = `<script>window.browser={tabs:{query:async()=>[{id:1,url:"x"}]},storage:{local:{get:async()=>({networkScan:true}),set:async()=>{}}},runtime:{sendMessage:async(m)=>m.type==="scan"?${JSON.stringify(result).replace(/</g, "\\u003c")}:m.type==="network"?${JSON.stringify(network)}:0}};</script>`;
+  const stub = `<script>window.browser={tabs:{query:async()=>[{id:1,url:"x"}]},storage:{local:{get:async()=>({networkScan:true}),set:async()=>{}}},runtime:{sendMessage:async(m)=>m.type==="network-switch"?true:m.type==="scan"?${JSON.stringify(result).replace(/</g, "\\u003c")}:m.type==="network"?${JSON.stringify(network)}:0}};</script>`;
   writeFileSync(join(dir, "index.html"), readFileSync(join(dir, "popup.html"), "utf8").replace("<script", () => `${stub}<script`));
   const server = await serve(dir);
   try {
@@ -61,15 +61,16 @@ try {
   const has = (kind, id) => report.findings.some((f) => f.kind === kind && f.selector.includes(id));
   check("scan runs in live mode", "live", report.mode);
   check("H22 the scan puts the scroll position back", 0, await page.evaluate(() => scrollY));
-  for (const [kind, id] of [
+  const planted = [
     ["display-none", "#h-none"], ["display-none", "#h-attr"], ["visibility-hidden", "#h-vis"], ["opacity-zero", "#h-opacity"],
     ["offscreen", "#h-offscreen"], ["offscreen", "#h-indent"], ["clipped", "#h-clip"], ["clipped", "#h-clippath"],
     ["tiny-font", "#h-tiny"], ["low-contrast", "#h-contrast"], ["pseudo-content", "#h-pseudo"],
-  ]) check(`${kind} found on ${id}`, true, has(kind, id));
-  for (const [kind, id] of [
     ["clipped", "#h-scale"], ["clipped", "#h-poly"], ["clipped", "#h-inset"], ["low-contrast", "#h-fill"], ["low-contrast", "#h-svg"],
     ["opacity-zero", "#h-filter"], ["covered", "#h-covered"], ["not-rendered", "#h-svgtitle"],
-  ]) check(`${kind} found on ${id}`, true, has(kind, id));
+  ];
+  for (const [kind, id] of planted) check(`${kind} found on ${id}`, true, has(kind, id));
+  // For the Markdown artifact: the score each planted note got.
+  record.planted = planted.map(([kind, id]) => ({ id, kind, score: report.findings.find((f) => f.kind === kind && f.selector.includes(id))?.score ?? null }));
   const clean = sanitize(report);
   for (const n of ["scale", "polygon", "inset", "fill", "svgtitle", "svgfill", "filter", "covered"]) {
     check(`H25 sanitize drops the ${n} note`, false, clean.includes(`Hidden note ${n}:`));
@@ -135,7 +136,7 @@ try {
     let same = true;
     for (let i = 0; i < 7; i++) {
       for (const mode of ["off", "on"]) {
-        await control.evaluate((on) => browser.storage.local.set({ networkScan: on }), mode === "on");
+        await control.evaluate((on) => browser.runtime.sendMessage({ type: "network-switch", on }), mode === "on");
         const seen = await load(`${url}?run=${i}${mode}`);
         runs[mode].push(seen);
       }
@@ -147,7 +148,14 @@ try {
     record.network.push({ page: name, medianMsOff: median(runs.off.map((r) => r.ms)), medianMsOn: median(runs.on.map((r) => r.ms)),
       sameHtml: same, flagged: scanned?.flagged ?? null, scanMs: scanned?.ms ?? null });
   }
-  await control.evaluate(() => browser.storage.local.set({ networkScan: false }));
+  // N5: results kept in session storage stay capped, however many pages load.
+  await control.evaluate(() => browser.runtime.sendMessage({ type: "network-switch", on: true }));
+  for (let i = 0; i < 55; i++) await (await fox.open(`${bench.url}/home.html?cap=${i}`)).close();
+  await new Promise((r) => setTimeout(r, 500));
+  const kept = await control.evaluate(async () => Object.keys(await browser.storage.session.get(null)).filter((k) => k.startsWith("net:")).length);
+  check("N5 the network results in session storage stay at 50 or fewer", true, kept > 0 && kept <= 50);
+  record.sessionResults = kept;
+  await control.evaluate(() => browser.runtime.sendMessage({ type: "network-switch", on: false }));
   check("N1 the page is the same with the network filter on", true, record.network.every((n) => n.sameHtml));
   check("N1 the network filter scans each HTML response", true, record.network.every((n) => typeof n.flagged === "number"));
   check("the network filter flags the mail trap", true, record.network[0].flagged >= 1);
@@ -167,6 +175,7 @@ const path = writeArtifact("artifacts", "e2e", record);
 // A short Markdown copy of the two tables: small enough to commit.
 const md = `# foxshield on foxbench (${record.startedAt.slice(0, 10)})\n\nThreshold ${THRESHOLD}. Pages from ${source}. E2E ${record.passed ? "passed" : "failed"}.\n\n`
   + `${record.network ? `## Network filter\n\n| Page | Median load ms, filter off | Median load ms, filter on | Scan ms | Flagged | Same HTML |\n|---|---|---|---|---|---|\n${record.network.map((n) => `| ${n.page} | ${n.medianMsOff} | ${n.medianMsOn} | ${n.scanMs} | ${n.flagged} | ${n.sameHtml} |`).join("\n")}\n\n` : ""}`
+  + `${record.planted ? `## Hiding-technique page (live)\n\n${record.planted.filter((p) => (p.score ?? 0) >= THRESHOLD).length} of ${record.planted.length} planted notes found at or above ${THRESHOLD}.\n\n| Element | Technique | Score |\n|---|---|---|\n${record.planted.map((p) => `| ${p.id} | ${p.kind} | ${p.score ?? "missed"} |`).join("\n")}\n\n` : ""}`
   + `## Live: Firefox ${record.firefox ?? "?"}, through the demo extension\n\n${record.live ? table(record.live) : record.error}\n\n## Static: scanHtml in Node\n\n${table(record.static)}\n`;
 writeFileSync(path.replace(/e2e-(\d{4}-\d\d-\d\d)\.json$/, "precision-recall-$1.md"), md);
 for (const c of record.checks) console.log(`${c.ok ? "ok " : "BAD"} ${c.name}: ${JSON.stringify(c.actual)}`);
