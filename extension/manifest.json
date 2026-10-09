@@ -12,18 +12,13 @@
       }
     }
   },
-  "permissions": ["storage"],
+  "permissions": ["scripting"],
+  "host_permissions": ["<all_urls>"],
   "background": {
     "scripts": ["background.js"]
   },
   "action": {
-    "default_title": "foxshield demo",
+    "default_title": "Scan this page with foxshield",
     "default_popup": "popup.html"
-  },
-  "content_scripts": [
-    {
-      "matches": ["http://127.0.0.1/*"],
-      "js": ["content.js"]
-    }
-  ]
+  }
 }
