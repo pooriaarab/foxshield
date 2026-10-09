@@ -32,13 +32,13 @@ export function scanDocument(target?: Document | ScanOptions, maybeOptions?: Sca
   // ---- Text rules -------------------------------------------------------
   const VISIBLE_MIN = 0.3;
   const RULES: [string, RegExp, number][] = [
-    ["ignore-previous", /\b(ignore|disregard|forget|override|skip)\b[^.!?\n]{0,40}?\b(previous|prior|above|earlier|preceding|any|your|other|original|system)\b[^.!?\n]{0,30}?\b(instructions?|prompts?|rules|directions|guidelines|context)\b/i, 0.9],
+    ["ignore-previous", /\b(ignore|disregard|forget|override|skip|drop|abandon|set aside|pay no attention to|stop following)\b[^.!?\n]{0,40}?\b(previous|prior|above|earlier|preceding|any|your|other|original|system|existing)\b[^.!?\n]{0,30}?\b(instructions?|prompts?|rules|directions|guidelines|guidance|context|directives|commands)\b|\b(ignore|disregard|forget|override|skip|drop|abandon|set aside|pay no attention to|stop following)\b[^.!?\n]{0,30}?\b(instructions?|prompts?|rules|directions|guidelines|guidance|context|directives|commands)\b[^.!?\n]{0,40}?\b(given|told|received|earlier|before|previously|above|so far)\b/i, 0.9],
     ["system-lookalike", /\[\s*(system|developer|admin)\b[^\]\n]{0,60}\]|<\|?\s*(system|im_start|im_end|endoftext)\s*\|?>|^\s*#{1,3}\s*(system|instructions?)\b|\b(system|developer)\s+(message|prompt|note|instruction)s?\b|\[\/?INST\]/im, 0.6],
     ["addressed-to-ai", /\b(note|message|instructions?|attention|notice|reminder|directive)s?\s+(for|to)\s+(the\s+|all\s+|any\s+)?(AI|LLM|automated|autonomous|virtual|language[- ]model)\b|\b(to|dear|hey|attention)\s*:?\s+(the\s+)?(AI|LLM)\s+(\w+\s+)?(assistants?|agents?|models?|bots?)\b|\bif you are an?\s+(AI|LLM|language model|automated|bot|assistant|agent)\b|\b(AI|LLM)\s+(\w+\s+)?(assistants?|agents?)\s+(must|should|need to|are required to)\b/i, 0.5],
     ["secrecy", /\b(do not|don'?t|never|without)\s+(tell(ing)?|mention(ing)?|inform(ing)?|reveal(ing)?|show(ing)?|ask(ing)?|notify(ing)?|alert(ing)?)\b[^.!?\n]{0,40}?\b(user|customer|human|owner|person|them)\b/i, 0.4],
     ["false-consent", /\b(user|customer|owner|client)s?\b[^.!?\n]{0,25}?\b(already|has|have|previously)\s+(approved|agreed|authori[sz]ed|consented|confirmed|allowed)\b|\bthey (have )?already (agreed|approved|consented)\b|\bstanding order\b/i, 0.4],
     ["override", /\b(priority override|before you do anything else|new instructions|updated instructions|instead of (the|what) (user|address|customer|person)|from now on,? you|you are now (in|an?|the)\b|developer mode|admin mode)/i, 0.3],
-    ["exfiltrate", /\b(send|forward|email|e-mail|mail|post|upload|submit|copy|paste|share|transfer|leak|add|append)\b[^.!?\n]{0,80}?\b(to|into|at|with)\s+(\S+@[\w-]+(\.[\w-]+)+|https?:\/\/\S+)/i, 0.35],
+    ["exfiltrate", /\b(send|forward|email|e-mail|mail|post|upload|submit|copy|paste|share|transfer|leak|add|append)\b[^.!?\n]{0,80}?\b(to|into|at|with)\s+(\S+@[\w-]+(\.[\w-]+)+|https?:\/\/\S+|[\w.-]+\s*[[(]?\s*at\s*[\])]?\s*[\w-]+\s*[[(]?\s*dot\s*[\])]?\s*\w+)/i, 0.35],
     ["inject-value", /\b(type|enter|put|write|fill in|use)\s+\S+@[\w-]+(\.[\w-]+)+\s+(in|into|as)\b/i, 0.35],
     ["credentials", /\b(passwords?|passcodes?|api[- ]?keys?|access tokens?|credit card|card numbers?|cvv|one[- ]time (code|password)|seed phrase|private key)\b/i, 0.15],
     ["tool-call", /<\/?\s*(tool_call|function_call|tool_use|invoke|function_calls)\b|"(name|tool|function)"\s*:\s*"[\w.-]+"\s*,\s*"(arguments|args|parameters|input)"\s*:|\b(call|use|run|invoke)\s+the\s+[\w-]+\s+(tool|function)\b/i, 0.5],
@@ -268,7 +268,7 @@ export function scanDocument(target?: Document | ScanOptions, maybeOptions?: Sca
   // ---- Hidden text --------------------------------------------------------
   const BASE: Partial<Record<FindingKind, number>> = { "display-none": 0.15, "not-rendered": 0.1, "visibility-hidden": 0.15, "opacity-zero": 0.25,
     offscreen: 0.25, clipped: 0.2, "tiny-font": 0.3, "low-contrast": 0.35, "aria-hidden": 0.05, comment: 0.1, noscript: 0.1, attribute: 0.05, "pseudo-content": 0.1, covered: 0.3 };
-  const ADDRESS = /\S+@[\w-]+\.[\w.-]+|https?:\/\/|\bwww\.|\b[a-z0-9-]+\.[a-z]{2,}\//i;
+  const ADDRESS = /\S+@[\w-]+\.[\w.-]+|https?:\/\/|\bwww\.|\b[a-z0-9-]+\.[a-z]{2,}\/|\b[\w.-]+\s*[[(]?\s*at\s*[\])]?\s*[\w-]+\s*[[(]?\s*dot\s*[\])]?\s*[a-z]{2,}\b/i;
   function hidden(kind: FindingKind, raw: string, selector: string, extra: string[] = [], links = "") {
     if (squash(raw).replace(/[^\p{L}\p{N}]/gu, "").length < 3) return;
     const plain = clean(raw);
@@ -449,9 +449,22 @@ export function scanDocument(target?: Document | ScanOptions, maybeOptions?: Sca
     walk(body, rootAcc, { ...ROOT, vis: look.vis, font: look.font, color: look.color, bg: look.bg ?? ROOT.bg }, 0);
   }
   for (const [win, [x, y]] of scrolled) win.scrollTo({ left: x, top: y, behavior: "instant" });
+  const plains: string[] = [];
   for (const acc of order) {
     if (squash(acc.text).length === 0) continue;
     blocks.push(checkVisible(acc.text, acc.spaced, selectorOf(acc.el, acc.prefix)));
+    plains.push(clean(acc.spaced));
+  }
+  // A phrase split over two neighbouring blocks: report a rule that matches only the pair, and flag both blocks.
+  for (let i = 0; i + 1 < blocks.length; i++) {
+    const alone = new Set([...rules(plains[i]!).names, ...rules(plains[i + 1]!).names]);
+    const pair = rules(`${plains[i]} ${plains[i + 1]}`);
+    if (pair.score < VISIBLE_MIN || pair.names.every((n) => alone.has(n))) continue;
+    const reason = [...pair.names, "split over two blocks"];
+    add("instruction", `${blocks[i]!.text} ${blocks[i + 1]!.text}`, blocks[i]!.selector, reason, pair.score);
+    for (const b of [blocks[i]!, blocks[i + 1]!]) {
+      if ((b.score ?? 0) < pair.score) Object.assign(b, { score: round(pair.score), reason: reason.join(", ") });
+    }
   }
   for (const [el, g] of groups) hidden(g.kind, g.text, selectorOf(el, g.prefix), g.aria ? ["aria-hidden"] : []);
   for (const [el, a] of arias) hidden("aria-hidden", a.text, selectorOf(el, a.prefix));
