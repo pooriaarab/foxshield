@@ -1,21 +1,57 @@
-// The E2E test: run scanDocument (from dist/) in a real Firefox on the
-// hiding-technique page, check each technique, and write
-// artifacts/e2e-<date>.json.
-// Usage: pnpm e2e [--headed]. Env: FIREFOX (the Firefox binary).
-import { launch, serve, writeArtifact } from "create-foxkit/e2e";
-import { scanDocument } from "../dist/index.js";
+// The E2E test, in a real Firefox:
+// 1. runs scanDocument on the hiding-technique page (H1-H16);
+// 2. scans every foxbench page through the demo extension ("Scan this page"),
+//    and reports precision and recall against foxbench's four traps (X1, X3, H17);
+// 3. checks the highlight overlay (X2) and the popup list;
+// 4. scans the same pages with scanHtml in Node, for the static table.
+// It writes artifacts/e2e-<date>.json.
+// Usage: pnpm e2e [--headed] [--screenshots <dir>]. Env: FIREFOX.
+import { cpSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { launch, poll, serve, writeArtifact } from "create-foxkit/e2e";
+import { scanDocument, scanHtml } from "../dist/index.js";
+import { score, table } from "./score.mjs";
 
-const record = { startedAt: new Date().toISOString(), checks: [] };
+const THRESHOLD = 0.5;
+const shotsAt = process.argv.indexOf("--screenshots");
+const shots = shotsAt > 0 ? process.argv[shotsAt + 1] : null;
+const record = { startedAt: new Date().toISOString(), threshold: THRESHOLD, checks: [] };
 const check = (name, expected, actual) => record.checks.push({ name, expected, actual, ok: actual === expected });
+const FIXTURES = "e2e/fixtures/generated/foxbench";
+const { source, pages } = JSON.parse(readFileSync(`${FIXTURES}/pages.json`, "utf8"));
+record.foxbench = source;
+
+// BiDi cannot capture a moz-extension: page. So this serves the built popup
+// over http with a stub `browser` that answers with a real scan result.
+async function popupShot(result, path) {
+  const dir = mkdtempSync(join(tmpdir(), "fsh-popup-"));
+  cpSync("dist-ext", dir, { recursive: true });
+  const stub = `<script>window.browser={tabs:{query:async()=>[{id:1}]},runtime:{sendMessage:async(m)=>m.type==="scan"?${JSON.stringify(result)}:0}};</script>`;
+  writeFileSync(join(dir, "index.html"), readFileSync(join(dir, "popup.html"), "utf8").replace("<script", `${stub}<script`));
+  const server = await serve(dir);
+  try {
+    const shot = await fox.open(`${server.url}/index.html`);
+    await shot.setViewport({ width: 420, height: 560 });
+    await shot.evaluate(() => document.getElementById("scan").click());
+    await poll(shot, () => document.querySelector("#findings li"));
+    await shot.screenshot({ path });
+    await shot.close();
+  } finally {
+    await server.close();
+  }
+}
 
 // Two servers on two ports are two origins, so the second one gives a cross-origin frame.
 const site = await serve("e2e/site");
 const other = await serve("e2e/site");
+const bench = await serve(FIXTURES);
 let fox;
 try {
   fox = await launch({ extension: "dist-ext", headless: !process.argv.includes("--headed") });
   record.firefox = await fox.browser.version();
 
+  // 1. Hiding techniques, with the library function run straight in the page.
   const page = await fox.open(`${site.url}/techniques.html?cross=${encodeURIComponent(`${other.url}/frame.html`)}`);
   await new Promise((r) => setTimeout(r, 800)); // let the late <style> (H15) and the frames arrive
   const report = await page.evaluate(scanDocument, {});
@@ -28,20 +64,63 @@ try {
     ["tiny-font", "#h-tiny"], ["low-contrast", "#h-contrast"], ["pseudo-content", "#h-pseudo"],
   ]) check(`${kind} found on ${id}`, true, has(kind, id));
   check("H2 visible child of a hidden parent is not hidden", false, report.findings.some((f) => f.text.includes("I am visible again")));
-  check("H13 open shadow root is scanned", true, report.findings.some((f) => f.selector.includes("#h-shadow >>> ") && f.score >= 0.5));
-  check("H14 same-origin iframe is scanned", true, report.findings.some((f) => f.selector.includes("#h-frame >>> ") && f.score >= 0.5));
+  check("H13 open shadow root is scanned", true, report.findings.some((f) => f.selector.includes("#h-shadow >>> ") && f.score >= THRESHOLD));
+  check("H14 same-origin iframe is scanned", true, report.findings.some((f) => f.selector.includes("#h-frame >>> ") && f.score >= THRESHOLD));
   check("H14 cross-origin iframe is counted as skipped", 1, report.skippedFrames);
-  check("H15 late CSS: the instruction is still flagged", true, report.findings.some((f) => f.selector.includes("#h-late") && f.score >= 0.5));
-  check("visible legit text and the Ignore button are not flagged", false, report.findings.some((f) => f.selector.includes("#legit") && f.score >= 0.5));
+  check("H15 late CSS: the instruction is still flagged", true, report.findings.some((f) => f.selector.includes("#h-late") && f.score >= THRESHOLD));
+  check("visible legit text and the Ignore button are not flagged", false, report.findings.some((f) => f.selector.includes("#legit") && f.score >= THRESHOLD));
+
+  // 2. Every foxbench page through the extension: the popup page sends "scan" for a tab.
+  const control = await fox.openExtensionPage("popup.html");
+  const tabIdOf = (url) => control.evaluate(async (u) => (await browser.tabs.query({})).find((t) => t.url === u)?.id, url);
+  const scanTab = (tabId) => control.evaluate((id) => browser.runtime.sendMessage({ type: "scan", tabId: id }), tabId);
+  const live = [];
+  for (const p of pages) {
+    const url = `${bench.url}/${p.name}.html`;
+    const tab = await fox.open(url);
+    const result = await scanTab(await tabIdOf(url));
+    if (!result?.report) throw new Error(`${p.name}: ${result?.error ?? "no report"}`);
+    live.push({ page: p, report: result.report, boxes: result.boxes });
+    if (p.name === "trap-shop-mug") {
+      // 3. The overlay: one host, a closed shadow root, one box per flagged finding.
+      const seen = await tab.evaluate(() => {
+        const hosts = document.querySelectorAll("[data-foxshield-overlay]");
+        return { hosts: hosts.length, closed: hosts[0]?.shadowRoot === null, leaks: hosts[0]?.textContent ?? "" };
+      });
+      check("X2 overlay has one host", 1, seen.hosts);
+      check("X2 overlay shadow root is closed to the page", true, seen.closed);
+      check("X2 overlay text is not readable from the page", "", seen.leaks);
+      check("X2 overlay draws a box for each flagged finding", result.report.findings.filter((f) => f.score >= THRESHOLD).length, result.boxes);
+      if (shots) await tab.screenshot({ path: `${shots}/overlay-trap-shop-mug.png` });
+      const id = await tabIdOf(url);
+      await control.evaluate((tabId) => browser.runtime.sendMessage({ type: "clear", tabId }), id);
+      check("X2 clear removes the overlay", 0, await tab.evaluate(() => document.querySelectorAll("[data-foxshield-overlay]").length));
+      // The popup: "Scan this page" lists the findings.
+      const popup = await fox.openExtensionPage(`popup.html?tab=${id}`);
+      await popup.evaluate(() => document.getElementById("scan").click());
+      check("popup lists the flagged finding", "low-contrast", await poll(popup, () => document.querySelector("#findings li.high .kind")?.textContent));
+      await popup.close();
+      if (shots) await popupShot(result, `${shots}/popup-trap-shop-mug.png`);
+    }
+    await tab.close();
+  }
+  record.live = score(live, THRESHOLD);
+  check("X3 the scan runs through scripting.executeScript", true, live.every((r) => r.report.mode === "live"));
+  check("X1 all four trap pages are caught", 4, record.live.summary.trapsCaught);
+  check("H17 no flagged finding on a normal page", 0, record.live.summary.normalPagesFlagged);
 } catch (error) {
   record.error = error instanceof Error ? error.message : String(error);
 } finally {
   await fox?.close();
-  await site.close();
-  await other.close();
+  await Promise.all([site.close(), other.close(), bench.close()]);
 }
+
+// 4. The same pages in Node (static mode: inline styles and <style> rules only).
+record.static = score(pages.map((p) => ({ page: p, report: scanHtml(readFileSync(`${FIXTURES}/${p.name}.html`, "utf8")) })), THRESHOLD);
 record.passed = !record.error && record.checks.length > 0 && record.checks.every((c) => c.ok);
 const path = writeArtifact("artifacts", "e2e", record);
 for (const c of record.checks) console.log(`${c.ok ? "ok " : "BAD"} ${c.name}: ${JSON.stringify(c.actual)}`);
+if (record.live) console.log(`\nLive (Firefox ${record.firefox}, via the extension):\n${table(record.live)}`);
+console.log(`\nStatic (scanHtml in Node):\n${table(record.static)}`);
 console.log(`${record.passed ? "PASS" : "FAIL"}${record.error ? `: ${record.error}` : ""} | ${path}`);
 process.exitCode = record.passed ? 0 : 1;
