@@ -13,10 +13,11 @@ async function tabId() {
 function item(f, threshold) {
   const li = document.createElement("li");
   li.className = f.score >= threshold ? "high" : "low";
-  const head = document.createElement("div");
+  const head = Object.assign(document.createElement("div"), { className: "head" });
+  const dot = Object.assign(document.createElement("span"), { className: "dot" });
   const kind = Object.assign(document.createElement("span"), { className: "kind", textContent: f.kind });
   const score = Object.assign(document.createElement("span"), { className: "score", textContent: f.score.toFixed(2) });
-  head.append(kind, score);
+  head.append(dot, kind, score);
   const reason = Object.assign(document.createElement("p"), { className: "reason", textContent: f.reason });
   const text = Object.assign(document.createElement("p"), { className: "text", textContent: `"${f.text.slice(0, 220)}"` });
   li.append(head, reason, text);
@@ -52,6 +53,6 @@ browser.storage.local.get("networkScan").then(async ({ networkScan }) => {
   const seen = tab?.url ? await browser.runtime.sendMessage({ type: "network", url: tab.url }) : null;
   $("network-status").textContent = seen
     ? `When this page loaded: ${seen.flagged} flagged in ${seen.bytes} bytes (scan took ${seen.ms} ms).`
-    : networkScan ? "Reload the page to scan it as it loads." : "Off. Turn it on to scan each page before it renders.";
+    : networkScan ? "Reload the page to scan it as it loads." : "Off. Turn it on to scan each page before it shows.";
 });
 $("network").addEventListener("change", (e) => browser.runtime.sendMessage({ type: "network-switch", on: e.target.checked }));
