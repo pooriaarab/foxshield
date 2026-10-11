@@ -6,18 +6,22 @@
     <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
-    <h1>foxshield</h1>
-    <p class="muted">Find hidden text and prompt injection before an agent reads the page.</p>
+    <header>
+      <img class="mark" src="icons/icon-48.png" alt="" width="22" height="22" />
+      <h1>foxshield</h1>
+    </header>
+    <p class="muted lead">Find hidden text and prompt injection before an agent reads the page.</p>
     <div class="row">
-      <button id="scan" type="button">Scan this page</button>
-      <button id="clear" type="button" class="quiet">Clear highlights</button>
+      <button id="scan" type="button" class="primary">Scan this page</button>
+      <button id="clear" type="button" class="quiet ghost">Clear highlights</button>
     </div>
     <p id="status" role="status"></p>
-    <label class="muted"><input id="all" type="checkbox" /> Show findings below the threshold</label>
+    <label class="switch muted"><input id="all" type="checkbox" /> Show findings below the threshold</label>
     <ol id="findings"></ol>
-    <hr />
-    <label><input id="network" type="checkbox" /> Scan HTML as it loads (network filter)</label>
-    <p id="network-status" class="muted"></p>
+    <section class="card network">
+      <label class="switch"><input id="network" type="checkbox" /> Scan HTML as it loads</label>
+      <p id="network-status" class="muted"></p>
+    </section>
     <script src="popup.js"></script>
   </body>
 </html>
