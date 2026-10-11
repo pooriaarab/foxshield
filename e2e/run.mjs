@@ -9,7 +9,9 @@
 import { cpSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { launch, poll, serve, writeArtifact } from "create-foxkit/e2e";
+import { spawn } from "node:child_process";
+import { createInterface } from "node:readline";
+import { browserMode, launch, poll, serve, writeArtifact } from "create-foxkit/e2e";
 import { sanitize, scanDocument, scanHtml } from "../dist/index.js";
 import { score, table } from "./score.mjs";
 
@@ -43,9 +45,20 @@ async function popupShot(result, path, network = null) {
   }
 }
 
-// Two servers on two ports are two origins, so the second one gives a cross-origin frame.
+/** A second origin. Locally another port is enough; on Ichabod every serve() in this process shares one tunnel origin, so it runs in a child process. */
+async function otherOrigin(dir) {
+  if (browserMode() !== "ichabod") return serve(dir);
+  const child = spawn(process.execPath, ["e2e/origin.mjs", dir], { stdio: ["pipe", "pipe", "inherit"] });
+  const [url] = await Promise.race([
+    createInterface({ input: child.stdout })[Symbol.asyncIterator]().next().then((line) => [line.value]),
+    new Promise((_, reject) => child.once("exit", (code) => reject(new Error(`e2e/origin.mjs exited with ${code} before it printed a URL.`)))),
+  ]);
+  return { url, close: () => new Promise((done) => (child.once("exit", done), child.stdin.end())) };
+}
+
+// Two servers on two origins, so the second one gives a cross-origin frame.
 const site = await serve("e2e/site");
-const other = await serve("e2e/site");
+const other = await otherOrigin("e2e/site");
 const bench = await serve(FIXTURES);
 let fox;
 let shopResult = null;
