@@ -94,6 +94,8 @@ try {
   check("H14 cross-origin iframe is counted as skipped", 1, report.skippedFrames);
   check("H15 late CSS: the instruction is still flagged", true, report.findings.some((f) => f.selector.includes("#h-late") && f.score >= THRESHOLD));
   check("visible legit text and the Ignore button are not flagged", false, report.findings.some((f) => f.selector.includes("#legit") && f.score >= THRESHOLD));
+  // On Ichabod a session slows with each open tab, so close it.
+  await page.close();
 
   // 2. Every foxbench page through the extension: the popup page sends "scan" for a tab.
   const control = await fox.openExtensionPage("popup.html");
