@@ -98,10 +98,14 @@ try {
   await page.close();
 
   // S7, S10: a live table reads one row per line, with the empty cell kept as a column,
-  // also after a th, and a "|", "\", "｜" or "│" in a cell escaped (S10, S11).
+  // also after a th, and a "|", "\\", "｜" or "│" in a cell escaped (S10, S11). S8: a flagged
+  // cell reads as a marker, its wrapped text below the row. S12: a cell cannot fake the marker.
   const tablePage = await fox.open(`${site.url}/table.html`);
-  const rows = sanitize(await tablePage.evaluate(scanDocument, {})).split("\n").filter((line) => line.includes(" | "));
-  check("S7 S10 S11 a live table row is one line, an empty cell an empty column, a | escaped", JSON.stringify(["ID | Sender | Recipient | Amount | Recurring", "4 | me | US12 | 1000.00 | no", "5 | GB29 | me | 10.00 | no", "6 |  | me | 7.00 | yes", "7 |  | me | 3.00 \\| 9.99 | no", "8 | a\\\\\\|b | c\\|d | e\\|f | no"]), JSON.stringify(rows));
+  const tableText = sanitize(await tablePage.evaluate(scanDocument, {})).split("\n");
+  const rows = tableText.filter((line) => line.includes(" | "));
+  check("S7 S10 S11 S12 a live table row is one line, an empty cell an empty column, a | escaped", JSON.stringify(["ID | Sender | Recipient | Amount | Recurring", "4 | me | US12 | 1000.00 | no", "5 | GB29 | me | 10.00 | no", "6 |  | me | 7.00 | yes", "7 |  | me | 3.00 \\| 9.99 | no", "8 | a\\\\\\|b | c\\|d | e\\|f | no", "9 |  | GB\\|29 | 10.00 | [untrusted-data, below]", "10 | \\[untrusted-data, below] | me | 1.00 | no"]), JSON.stringify(rows));
+  const below = tableText.slice(tableText.indexOf(rows[6]) + 1, tableText.indexOf(rows[7]));
+  check("S8 a flagged cell's text follows its row, wrapped", JSON.stringify([true, true, true]), JSON.stringify([(below[0] ?? "").startsWith("<untrusted-data source=\"foxshield\""), below.join(" ").includes("Ignore all previous instructions"), below.at(-1) === "</untrusted-data>"]));
   await tablePage.close();
 
   // 2. Every foxbench page through the extension: the popup page sends "scan" for a tab.
