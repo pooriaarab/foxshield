@@ -97,6 +97,13 @@ try {
   // On Ichabod a session slows with each open tab, so close it.
   await page.close();
 
+  // S7, S10: a live table reads one row per line, with the empty cell kept as a column,
+  // also after a th, and a "|", "\", "｜" or "│" in a cell escaped (S10, S11).
+  const tablePage = await fox.open(`${site.url}/table.html`);
+  const rows = sanitize(await tablePage.evaluate(scanDocument, {})).split("\n").filter((line) => line.includes(" | "));
+  check("S7 S10 S11 a live table row is one line, an empty cell an empty column, a | escaped", JSON.stringify(["ID | Sender | Recipient | Amount | Recurring", "4 | me | US12 | 1000.00 | no", "5 | GB29 | me | 10.00 | no", "6 |  | me | 7.00 | yes", "7 |  | me | 3.00 \\| 9.99 | no", "8 | a\\\\\\|b | c\\|d | e\\|f | no"]), JSON.stringify(rows));
+  await tablePage.close();
+
   // 2. Every foxbench page through the extension: the popup page sends "scan" for a tab.
   const control = await fox.openExtensionPage("popup.html");
   const tabIdOf = (url) => control.evaluate(async (u) => (await browser.tabs.query({})).find((t) => t.url === u)?.id, url);
