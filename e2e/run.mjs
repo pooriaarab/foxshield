@@ -9,7 +9,9 @@
 import { cpSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { launch, poll, serve, writeArtifact } from "create-foxkit/e2e";
+import { spawn } from "node:child_process";
+import { createInterface } from "node:readline";
+import { browserMode, launch, poll, serve, writeArtifact } from "create-foxkit/e2e";
 import { sanitize, scanDocument, scanHtml } from "../dist/index.js";
 import { score, table } from "./score.mjs";
 
@@ -43,9 +45,20 @@ async function popupShot(result, path, network = null) {
   }
 }
 
-// Two servers on two ports are two origins, so the second one gives a cross-origin frame.
+/** A second origin. Locally another port is enough; on Ichabod every serve() in this process shares one tunnel origin, so it runs in a child process. */
+async function otherOrigin(dir) {
+  if (browserMode() !== "ichabod") return serve(dir);
+  const child = spawn(process.execPath, ["e2e/origin.mjs", dir], { stdio: ["pipe", "pipe", "inherit"] });
+  const [url] = await Promise.race([
+    createInterface({ input: child.stdout })[Symbol.asyncIterator]().next().then((line) => [line.value]),
+    new Promise((_, reject) => child.once("exit", (code) => reject(new Error(`e2e/origin.mjs exited with ${code} before it printed a URL.`)))),
+  ]);
+  return { url, close: () => new Promise((done) => (child.once("exit", done), child.stdin.end())) };
+}
+
+// Two servers on two origins, so the second one gives a cross-origin frame.
 const site = await serve("e2e/site");
-const other = await serve("e2e/site");
+const other = await otherOrigin("e2e/site");
 const bench = await serve(FIXTURES);
 let fox;
 let shopResult = null;
@@ -81,6 +94,15 @@ try {
   check("H14 cross-origin iframe is counted as skipped", 1, report.skippedFrames);
   check("H15 late CSS: the instruction is still flagged", true, report.findings.some((f) => f.selector.includes("#h-late") && f.score >= THRESHOLD));
   check("visible legit text and the Ignore button are not flagged", false, report.findings.some((f) => f.selector.includes("#legit") && f.score >= THRESHOLD));
+  // On Ichabod a session slows with each open tab, so close it.
+  await page.close();
+
+  // S7, S10: a live table reads one row per line, with the empty cell kept as a column,
+  // also after a th, and a "|", "\", "｜" or "│" in a cell escaped (S10, S11).
+  const tablePage = await fox.open(`${site.url}/table.html`);
+  const rows = sanitize(await tablePage.evaluate(scanDocument, {})).split("\n").filter((line) => line.includes(" | "));
+  check("S7 S10 S11 a live table row is one line, an empty cell an empty column, a | escaped", JSON.stringify(["ID | Sender | Recipient | Amount | Recurring", "4 | me | US12 | 1000.00 | no", "5 | GB29 | me | 10.00 | no", "6 |  | me | 7.00 | yes", "7 |  | me | 3.00 \\| 9.99 | no", "8 | a\\\\\\|b | c\\|d | e\\|f | no"]), JSON.stringify(rows));
+  await tablePage.close();
 
   // 2. Every foxbench page through the extension: the popup page sends "scan" for a tab.
   const control = await fox.openExtensionPage("popup.html");
