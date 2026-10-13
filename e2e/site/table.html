@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8" /><title>Transactions</title></head>
+  <body>
+    <h1>Transactions</h1>
+    <!-- The AgentDojo banking table: a cell left empty, and a received payment whose recipient is "me" (S7). -->
+    <table id="tx">
+      <thead><tr><th>ID</th><th>Sender</th><th>Recipient</th><th>Amount</th><th>Recurring</th></tr></thead>
+      <tbody>
+        <tr><td>4</td><td>me</td><td>US12</td><td>1000.00</td><td>no</td></tr>
+        <tr><td>5</td><td>GB29</td><td>me</td><td><strong>10</strong>.00</td><td>no</td></tr>
+        <tr><td>6</td><td></td><td>me</td><td>7.00</td><td>yes</td></tr>
+        <!-- S10: a row header, then an empty td, and a "|" in a cell. -->
+        <tr><th>7</th><td></td><td>me</td><td>3.00 | 9.99</td><td>no</td></tr>
+        <!-- S11: a "\" before a "|", a full-width "｜" and a box-drawing "│" cannot fake a column. -->
+        <tr><td>8</td><td>a\|b</td><td>c｜d</td><td>e│f</td><td>no</td></tr>
+      </tbody>
+    </table>
+  </body>
+</html>
