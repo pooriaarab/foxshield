@@ -1,7 +1,7 @@
 {
   "name": "foxshield",
   "version": "0.1.6",
-  "description": "Find hidden text and prompt injection in a web page before an agent reads it.",
+  "description": "Prompt injection and hidden-text scanning for HTML, Node.js browser agents, and Firefox extensions, with sanitization and optional foxmind review.",
   "type": "module",
   "license": "MIT",
   "author": "Pooria Arab",
@@ -49,5 +49,19 @@
   },
   "dependencies": {
     "linkedom": "0.18.13"
-  }
+  },
+  "keywords": [
+    "prompt-injection",
+    "hidden-text",
+    "html",
+    "security",
+    "browser-agent",
+    "firefox",
+    "mozilla",
+    "nodejs",
+    "typescript",
+    "sanitization",
+    "linkedom",
+    "foxmind"
+  ]
 }
