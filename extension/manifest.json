@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "foxshield — find hidden prompt injection",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Find hidden text and prompt injection in a web page before an agent reads it.",
   "icons": { "48": "icons/icon-48.png", "96": "icons/icon-96.png", "128": "icons/icon-128.png" },
   "browser_specific_settings": {
