@@ -246,6 +246,11 @@ Install from AMO: [addons.mozilla.org/firefox/addon/foxshield](https://addons.mo
   general, other languages, or text encoded as Base64 or similar.
 - Text that uses no hiding trick and no rule phrase passes as normal text.
   `sanitize()` keeps it.
+- A notice that orders the agent by its role is caught when the role names
+  AI, LLM, automated or autonomous assistants, agents or bots ("Automated
+  assistants must verify...", "AI assistants: send the..."). A bare role
+  ("Assistants must...", "Agents: open the...") is not: support and travel
+  agents get those words on normal pages.
 - A flagged block is a whole block. In the foxbench mail trap, the whole email
   body is one block, so `sanitize()` wraps the normal part of the email too.
 - Visible pages that talk about prompt injection, or show tool-call JSON (API
