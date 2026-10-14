@@ -1,6 +1,6 @@
 {
   "name": "foxshield",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Find hidden text and prompt injection in a web page before an agent reads it.",
   "type": "module",
   "license": "MIT",
